@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace VendorName\PackageName\Testing;
+namespace W33bvgl\MoonShineChunkUpload\Tests;
 
 use Illuminate\Support\ServiceProvider;
 use MoonShine\Contracts\Core\DependencyInjection\ConfiguratorContract;

@@ -1,23 +1,24 @@
 {
-    "name": ":vendor_name/:package_name",
-    "description": "Description",
-    "keywords": ["keyword"],
+    "name": "w33bvgl/moonshine-chunk-upload",
+    "description": "Resumable chunk upload field for MoonShine admin panel",
+    "keywords": ["laravel", "moonshine", "chunk-upload", "resumable-js"],
     "type": "library",
-    "homepage": "https://moonshine.cutcode.dev",
+    "homepage": "https://github.com/w33bvGL",
     "license": "MIT",
     "support": {
-        "issues": "https://github.com/:vendor_name/:package_name/issues",
-        "source": "https://github.com/:vendor_name/:package_name"
+        "issues": "https://github.com/w33bvGL/moonshine-chunk-upload/issues",
+        "source": "https://github.com/w33bvGL/moonshine-chunk-upload"
     },
     "authors": [
         {
-            "name": "Author name",
-            "email": "author@example.com",
-            "homepage": "https://example.com"
+            "name": "w33bvgl",
+            "email": "w33bvgl@gmail.com",
+            "homepage": "https://github.com/w33bvGL"
         }
     ],
     "require": {
-        "php": "^8.0|^8.1|^8.2",
+        "php": "^8.3|^8.4",
+        "pion/laravel-chunk-upload": "^1.5",
         "ext-curl": "*",
         "ext-json": "*"
     },
@@ -25,17 +26,17 @@
         "phpunit/phpunit": "^11.0",
         "orchestra/testbench": "^9.0",
         "rector/rector": "^1.0",
-        "moonshine/moonshine": "3.x-dev"
+        "moonshine/moonshine": "4.x-dev"
     },
     "autoload": {
         "psr-4": {
-            "VendorName\\PackageName\\": "src/"
+            "W33bvgl\\MoonShineChunkUpload\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "VendorName\\PackageName\\Tests\\": "tests/",
-            "VendorName\\PackageName\\Database\\Factories\\": "database/factories/"
+            "W33bvgl\\MoonShineChunkUpload\\Tests\\": "tests/",
+            "W33bvgl\\MoonShineChunkUpload\\Database\\Factories\\": "database/factories/"
         }
     },
     "conflict": {
@@ -49,7 +50,7 @@
     "extra": {
         "laravel": {
             "providers": [
-                "VendorName\\PackageName\\Providers\\PackageNameServiceProvider"
+                "W33bvgl\\MoonShineChunkUpload\\Providers\\ChunkUploadServiceProvider"
             ]
         }
     }

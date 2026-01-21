@@ -1,0 +1,14 @@
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/var/www
+    environment:
+      - "APP_ENV=testing"
+      - "DB_CONNECTION=sqlite"
+      - "DB_DATABASE=:memory:"
+    tty: true
+    stdin_open: true
+    command: tail -f /dev/null
