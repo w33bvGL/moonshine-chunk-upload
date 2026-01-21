@@ -50,7 +50,7 @@
     "extra": {
         "laravel": {
             "providers": [
-                "W33bvgl\\MoonShineChunkUpload\\Providers\\ChunkUploadServiceProvider"
+              "MoonshineChunkUploadServiceProvider"
             ]
         }
     }

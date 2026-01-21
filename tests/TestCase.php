@@ -7,7 +7,8 @@ namespace W33bvgl\MoonShineChunkUpload\Tests;
 use Orchestra\Testbench\TestCase as Orchestra;
 use MoonShine\Laravel\Providers\MoonShineServiceProvider;
 use Random\RandomException;
-use W33bvgl\MoonShineChunkUpload\Providers\ChunkUploadServiceProvider;
+use W33bvgl\MoonShineChunkUpload\Providers\MoonshineChunkUploadServiceProvider;
+use Pion\Laravel\ChunkUpload\Providers\ChunkUploadServiceProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 abstract class TestCase extends Orchestra
@@ -30,6 +31,7 @@ abstract class TestCase extends Orchestra
     {
         return [
             MoonShineServiceProvider::class,
+            MoonshineChunkUploadServiceProvider::class,
             ChunkUploadServiceProvider::class,
             TestingServiceProvider::class,
         ];
@@ -43,9 +45,11 @@ abstract class TestCase extends Orchestra
         $app['config']->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
         $app['config']->set('database.default', 'testing');
 
+        $storagePath = __DIR__ . '/storage';
+
         $app['config']->set('filesystems.disks.local', [
             'driver' => 'local',
-            'root' => storage_path('app'),
+            'root' => $storagePath,
         ]);
 
         $app['config']->set('chunk-upload.storage.chunks', 'local/chunks');

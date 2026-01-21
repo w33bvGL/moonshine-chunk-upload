@@ -6,7 +6,7 @@ namespace W33bvgl\MoonShineChunkUpload\Providers;
 
 use Illuminate\Support\ServiceProvider;
 
-final class ChunkUploadServiceProvider extends ServiceProvider
+final class MoonshineChunkUploadServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
