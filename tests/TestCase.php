@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace W33bvgl\MoonShineChunkUpload\Tests;
 
+use Illuminate\Routing\Route;
 use Orchestra\Testbench\TestCase as Orchestra;
 use MoonShine\Laravel\Providers\MoonShineServiceProvider;
 use Random\RandomException;
@@ -55,6 +56,13 @@ abstract class TestCase extends Orchestra
         $app['config']->set('chunk-upload.storage.chunks', 'local/chunks');
 
         $app['config']->set('moonshine.use_migrations', true);
-        $app['config']->set('moonshine.use_auth', true);
+        $app['config']->set('moonshine.use_auth', false);
+    }
+
+    protected function defineRoutes($router): void
+    {
+        Route::get('/playground', function () {
+                return 'sex';
+        });
     }
 }

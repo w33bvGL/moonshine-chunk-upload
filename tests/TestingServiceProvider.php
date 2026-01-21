@@ -9,6 +9,7 @@ use MoonShine\Contracts\Core\DependencyInjection\ConfiguratorContract;
 use MoonShine\Contracts\Core\DependencyInjection\CoreContract;
 use MoonShine\Laravel\Resources\MoonShineUserResource;
 use MoonShine\Laravel\Resources\MoonShineUserRoleResource;
+use W33bvgl\MoonShineChunkUpload\Tests\MoonShine\Resources\ChunkTestResource;
 
 final class TestingServiceProvider extends ServiceProvider
 {
@@ -17,6 +18,7 @@ final class TestingServiceProvider extends ServiceProvider
         $core->resources([
             MoonShineUserResource::class,
             MoonShineUserRoleResource::class,
+            ChunkTestResource::class,
         ])->pages($config->getPages());
     }
 }

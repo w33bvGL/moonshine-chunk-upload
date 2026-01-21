@@ -12,3 +12,19 @@ services:
     tty: true
     stdin_open: true
     command: tail -f /dev/null
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/var/www
+    environment:
+      - "APP_ENV=testing"
+      - "DB_CONNECTION=sqlite"
+      - "DB_DATABASE=storage/database.sqlite"
+    tty: true
+    stdin_open: true
+    command: vendor/bin/testbench serve --host=0.0.0.0 --port=8080
