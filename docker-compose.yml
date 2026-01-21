@@ -1,5 +1,6 @@
 services:
   tests:
+    container_name: tests
     build:
       context: .
       dockerfile: Dockerfile
@@ -14,6 +15,7 @@ services:
     command: tail -f /dev/null
 
   ui:
+    container_name: ui
     build:
       context: .
       dockerfile: Dockerfile

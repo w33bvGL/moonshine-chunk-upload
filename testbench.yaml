@@ -1,0 +1,5 @@
+providers:
+  - MoonShine\Laravel\Providers\MoonShineServiceProvider
+  - Pion\Laravel\ChunkUpload\Providers\ChunkUploadServiceProvider
+  - W33bvgl\MoonShineChunkUpload\Providers\MoonshineChunkUploadServiceProvider
+  - W33bvgl\MoonShineChunkUpload\Tests\TestingServiceProvider

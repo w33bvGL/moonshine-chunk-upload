@@ -1,7 +1,12 @@
 {
     "name": "w33bvgl/moonshine-chunk-upload",
     "description": "Resumable chunk upload field for MoonShine admin panel",
-    "keywords": ["laravel", "moonshine", "chunk-upload", "resumable-js"],
+    "keywords": [
+        "laravel",
+        "moonshine",
+        "chunk-upload",
+        "resumable-js"
+    ],
     "type": "library",
     "homepage": "https://github.com/w33bvGL",
     "license": "MIT",
@@ -36,7 +41,10 @@
     "autoload-dev": {
         "psr-4": {
             "W33bvgl\\MoonShineChunkUpload\\Tests\\": "tests/",
-            "W33bvgl\\MoonShineChunkUpload\\Database\\Factories\\": "database/factories/"
+            "W33bvgl\\MoonShineChunkUpload\\Database\\Factories\\": "database/factories/",
+            "Workbench\\App\\": "workbench/app/",
+            "Workbench\\Database\\Factories\\": "workbench/database/factories/",
+            "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
         }
     },
     "conflict": {
@@ -45,12 +53,27 @@
     "scripts": {
         "test": "vendor/bin/phpunit",
         "rector": "vendor/bin/rector process --clear-cache",
-        "format": "vendor/bin/php-cs-fixer fix --allow-risky=yes"
+        "format": "vendor/bin/php-cs-fixer fix --allow-risky=yes",
+        "post-autoload-dump": [
+            "@clear",
+            "@prepare"
+        ],
+        "clear": "@php vendor/bin/testbench package:purge-skeleton --ansi",
+        "prepare": "@php vendor/bin/testbench package:discover --ansi",
+        "build": "@php vendor/bin/testbench workbench:build --ansi",
+        "serve": [
+            "Composer\\Config::disableProcessTimeout",
+            "@build",
+            "@php vendor/bin/testbench serve --ansi"
+        ],
+        "lint": [
+            "@php vendor/bin/phpstan analyse --verbose --ansi"
+        ]
     },
     "extra": {
         "laravel": {
             "providers": [
-              "MoonshineChunkUploadServiceProvider"
+                "MoonshineChunkUploadServiceProvider"
             ]
         }
     }

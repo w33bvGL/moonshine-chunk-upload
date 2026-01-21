@@ -5,37 +5,22 @@ declare(strict_types=1);
 namespace W33bvgl\MoonShineChunkUpload\Tests;
 
 use Illuminate\Routing\Route;
+use Illuminate\Routing\RouteCollection;
+use Orchestra\Testbench\Attributes\WithMigration;
+use Orchestra\Testbench\Concerns\WithWorkbench;
 use Orchestra\Testbench\TestCase as Orchestra;
-use MoonShine\Laravel\Providers\MoonShineServiceProvider;
 use Random\RandomException;
-use W33bvgl\MoonShineChunkUpload\Providers\MoonshineChunkUploadServiceProvider;
-use Pion\Laravel\ChunkUpload\Providers\ChunkUploadServiceProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
+
+#[WithMigration]
 abstract class TestCase extends Orchestra
 {
-    use RefreshDatabase;
+    use WithWorkbench, RefreshDatabase;
 
     protected function setUp(): void
     {
         parent::setUp();
-
-        $this->loadLaravelMigrations();
-        $moonshineMigrations = realpath(__DIR__ . '/../vendor/moonshine/moonshine/src/Laravel/database/migrations');
-
-        if ($moonshineMigrations) {
-            $this->loadMigrationsFrom($moonshineMigrations);
-        }
-    }
-
-    protected function getPackageProviders($app): array
-    {
-        return [
-            MoonShineServiceProvider::class,
-            MoonshineChunkUploadServiceProvider::class,
-            ChunkUploadServiceProvider::class,
-            TestingServiceProvider::class,
-        ];
     }
 
     /**
@@ -61,8 +46,9 @@ abstract class TestCase extends Orchestra
 
     protected function defineRoutes($router): void
     {
-        Route::get('/playground', function () {
-                return 'sex';
-        });
+        $router->getRoutes()->refreshNameLookups();
+        $router->setRoutes(new RouteCollection);
+
+        $router->get('/playground', fn() => 'Only me!');
     }
 }

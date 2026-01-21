@@ -6,11 +6,12 @@ namespace W33bvgl\MoonShineChunkUpload\Tests\Feature;
 
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use PHPUnit\Framework\Attributes\Test;
 use W33bvgl\MoonShineChunkUpload\Tests\TestCase;
 
 final class ChunkUploadTest extends TestCase
 {
-    /** @test */
+    #[Test]
     public function it_can_successfully_upload_a_file_chunk_test(): void
     {
         $response = $this->postJson(route('moonshine-chunk.upload'), [
