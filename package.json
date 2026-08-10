@@ -1,5 +1,6 @@
 {
   "name": "moonshine-chunk-upload",
+  "description": "Resumable, parallel chunked file upload field for the MoonShine 4 admin panel. Large files are split into chunks in the browser, uploaded in parallel with automatic retries, and reassembled on the server. Uploads survive dropped connections and page reloads.",
   "private": true,
   "version": "1.0.0",
   "type": "module",
