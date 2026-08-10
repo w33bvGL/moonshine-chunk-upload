@@ -9,7 +9,7 @@
     "rules": {
         "declare_strict_types": true,
         "header_comment": {
-            "header": "Copyright Anidzen @w33bvgl",
+            "header": "Copyright @w33bvgl",
             "comment_type": "comment",
             "location": "after_declare_strict",
             "separate": "both"

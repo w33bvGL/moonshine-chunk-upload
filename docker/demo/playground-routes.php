@@ -4,10 +4,6 @@ declare(strict_types=1);
 
 /*
  * Copyright Anidzen @w33bvgl
- *
- * The playground has no resource behind it, so the form posts here and the
- * fields are applied by hand — exactly what a ModelResource would do for a real
- * model, minus the database.
  */
 
 use Illuminate\Support\Facades\Route;

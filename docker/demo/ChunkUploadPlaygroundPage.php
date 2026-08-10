@@ -19,10 +19,6 @@ use MoonShine\UI\Components\Layout\Div;
 use MoonShine\UI\Components\Layout\Grid;
 use W33bvgl\MoonShineChunkUpload\Fields\ChunkUpload;
 
-/**
- * The sandbox page: three fields covering the options that behave differently
- * at runtime, and a live view of what ended up on disk.
- */
 class ChunkUploadPlaygroundPage extends Page
 {
     protected ?string $layout = PlaygroundLayout::class;
