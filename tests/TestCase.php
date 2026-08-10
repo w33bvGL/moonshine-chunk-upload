@@ -2,53 +2,56 @@
 
 declare(strict_types=1);
 
+/*
+ * Copyright Anidzen @w33bvgl
+ */
+
 namespace W33bvgl\MoonShineChunkUpload\Tests;
 
-use Illuminate\Routing\Route;
-use Illuminate\Routing\RouteCollection;
-use Orchestra\Testbench\Attributes\WithMigration;
-use Orchestra\Testbench\Concerns\WithWorkbench;
+use Illuminate\Support\Facades\File;
 use Orchestra\Testbench\TestCase as Orchestra;
-use Random\RandomException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use W33bvgl\MoonShineChunkUpload\Providers\MoonshineChunkUploadServiceProvider;
 
-
-#[WithMigration]
 abstract class TestCase extends Orchestra
 {
-    use WithWorkbench, RefreshDatabase;
-
     protected function setUp(): void
     {
         parent::setUp();
+
+        File::deleteDirectory($this->storagePath());
+    }
+
+    protected function tearDown(): void
+    {
+        File::deleteDirectory($this->storagePath());
+
+        parent::tearDown();
     }
 
     /**
-     * @throws RandomException
+     * @return list<class-string>
      */
-    protected function defineEnvironment($app): void
+    protected function getPackageProviders($app): array
     {
-        $app['config']->set('app.key', 'base64:'.base64_encode(random_bytes(32)));
-        $app['config']->set('database.default', 'testing');
-
-        $storagePath = __DIR__ . '/storage';
-
-        $app['config']->set('filesystems.disks.local', [
-            'driver' => 'local',
-            'root' => $storagePath,
-        ]);
-
-        $app['config']->set('chunk-upload.storage.chunks', 'local/chunks');
-
-        $app['config']->set('moonshine.use_migrations', true);
-        $app['config']->set('moonshine.use_auth', false);
+        return [
+            MoonshineChunkUploadServiceProvider::class,
+        ];
     }
 
-    protected function defineRoutes($router): void
+    protected function defineEnvironment($app): void
     {
-        $router->getRoutes()->refreshNameLookups();
-        $router->setRoutes(new RouteCollection);
+        $app['config']->set('filesystems.disks.local', [
+            'driver' => 'local',
+            'root' => $this->storagePath(),
+        ]);
 
-        $router->get('/playground', fn() => 'Only me!');
+        $app['config']->set('moonshine-chunk-upload.disk', 'local');
+        $app['config']->set('moonshine-chunk-upload.tmp_dir', 'tmp');
+        $app['config']->set('moonshine-chunk-upload.final_dir', 'final');
+    }
+
+    protected function storagePath(): string
+    {
+        return __DIR__.'/storage/app';
     }
 }

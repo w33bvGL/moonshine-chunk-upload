@@ -2,11 +2,16 @@
 
 declare(strict_types=1);
 
+/*
+ * Copyright Anidzen @w33bvgl
+ */
+
 namespace W33bvgl\MoonShineChunkUpload\Fields;
 
-use Closure;
+use MoonShine\AssetManager\Js;
 use MoonShine\UI\Fields\Field;
 use MoonShine\UI\Traits\Removable;
+use Override;
 
 class ChunkUpload extends Field
 {
@@ -14,95 +19,164 @@ class ChunkUpload extends Field
 
     protected string $view = 'moonshine-chunk-upload::fields.chunk-upload';
 
-    protected string $uploadRoute = '';
-    protected array $allowedExtensions = [];
+    protected string $profile = 'video';
+
+    /** @var ?list<string> */
+    protected ?array $allowedExtensionsOverride = null;
+
     protected string $disk = 'public';
 
     protected string $color = 'primary';
-    protected string $size = 'md';
-    protected bool $radial = false;
 
-    public function __construct(string $label, ?string $column = null, ?Closure $formattedValueCallback = null)
+    protected int $chunkSize = 8 * 1024 * 1024;
+
+    protected int $concurrency = 4;
+
+    protected bool $debug = false;
+
+    protected string $title = 'Upload file';
+
+    protected string $icon = 'c.cloud-arrow-up';
+
+    protected string $btnText = 'Choose file';
+
+    public function disk(string $disk): self
     {
-        parent::__construct($label, $column, $formattedValueCallback);
+        $this->disk = $disk;
 
-        $this->uploadRoute = route('moonshine-chunk.upload');
-    }
-
-    public function video(): self
-    {
-        return $this->allowedExtensions(['mp4', 'mov', 'avi', 'mkv', 'webm']);
-    }
-
-    public function file(): self
-    {
-        return $this->allowedExtensions(['zip', 'rar', '7z', 'pdf', 'docx']);
+        return $this;
     }
 
     public function color(string $color): self
     {
         $this->color = $color;
+
         return $this;
     }
 
-    public function size(string $size): self
+    public function chunkSize(int $bytes): self
     {
-        $this->size = $size;
+        $this->chunkSize = $bytes;
+
         return $this;
     }
 
-    public function radial(): self
+    public function concurrency(int $parallelRequests): self
     {
-        $this->radial = true;
+        $this->concurrency = max(1, min(8, $parallelRequests));
+
         return $this;
     }
 
-    public function disk(string $disk): self
+    /**
+     * Extension profile from config/moonshine-chunk-upload.php (video / audio / subtitle / ...).
+     */
+    public function profile(string $profile): self
     {
-        $this->disk = $disk;
+        $this->profile = $profile;
+
         return $this;
     }
 
-    public function uploadRoute(string $route): self
-    {
-        $this->uploadRoute = $route;
-        return $this;
-    }
-
+    /**
+     * Restrict uploads to a specific extension list, overriding the profile default.
+     *
+     * @param list<string> $extensions
+     */
     public function allowedExtensions(array $extensions): self
     {
-        $this->allowedExtensions = array_map(
-            fn($ext) => str_replace('.', '', strtolower($ext)),
-            $extensions
-        );
+        $this->allowedExtensionsOverride = $extensions;
 
         return $this;
     }
 
+    public function title(string $title): self
+    {
+        $this->title = $title;
+
+        return $this;
+    }
+
+    public function icon(string $icon): self
+    {
+        $this->icon = $icon;
+
+        return $this;
+    }
+
+    public function btnText(string $text): self
+    {
+        $this->btnText = $text;
+
+        return $this;
+    }
+
+    public function debug(bool $debug = true): self
+    {
+        $this->debug = $debug;
+
+        return $this;
+    }
+
+    #[Override]
+    protected function assets(): array
+    {
+        return [
+            Js::make('vendor/moonshine-chunk-upload/chunk-upload.js')->defer(),
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function getAllowedExtensions(): array
+    {
+        if ($this->allowedExtensionsOverride !== null) {
+            return $this->allowedExtensionsOverride;
+        }
+
+        /** @var array<string, list<string>> $profiles */
+        $profiles = config('moonshine-chunk-upload.profiles');
+
+        return $profiles[$this->profile] ?? [];
+    }
+
+    #[Override]
     protected function resolveValue(): mixed
     {
         return $this->toValue();
     }
 
+    #[Override]
     protected function viewData(): array
     {
-        $accept = !empty($this->allowedExtensions)
-            ? '.' . implode(',.', $this->allowedExtensions)
-            : '*';
+        $extensions = $this->getAllowedExtensions();
+        $routeName  = (string) config('moonshine-chunk-upload.route.name');
 
         return [
             'element' => $this,
-            'inputName' => $this->getColumn(),
+            'inputName' => $this->getAttribute('name') ?? $this->getColumn(),
             'inputValue' => $this->toValue(),
-            'uploadRoute' => $this->uploadRoute,
-            'extensions' => $this->allowedExtensions,
-            'accept' => $accept,
+            'csrfToken' => csrf_token(),
+            'urls' => [
+                'init' => route("{$routeName}init"),
+                'chunk' => route("{$routeName}chunk"),
+                'status' => route("{$routeName}status"),
+                'finalize' => route("{$routeName}finalize"),
+                'abort' => route("{$routeName}abort"),
+            ],
+            'profile' => $this->profile,
+            'extensions' => $extensions,
+            'chunkSize' => $this->chunkSize,
+            'concurrency' => $this->concurrency,
             'color' => $this->color,
-            'size' => $this->size,
-            'radial' => $this->radial,
-            'progressAttributes' => [
-                'x-bind:value' => 'progress',
-            ]
+            'title' => $this->title,
+            'icon' => $this->icon,
+            'btnText' => $this->btnText,
+            'debug' => $this->debug,
+            'accept' => $extensions === []
+                ? '*'
+                : '.'.implode(',.', $extensions),
         ];
     }
 }

@@ -4,16 +4,10 @@ export default defineConfig({
     build: {
         emptyOutDir: false,
         lib: {
-            entry: 'resources/js/filepond.js',
-            name: 'MoonshineFilepond',
+            entry: 'resources/js/chunk-upload.js',
+            name: 'MoonShineChunkUpload',
             formats: ['iife'],
-            fileName: () => 'filepond.js',
-            cssFileName: 'filepond',
-        },
-        rollupOptions: {
-            output: {
-                assetFileNames: 'filepond.[ext]',
-            }
+            fileName: () => 'chunk-upload.js',
         },
         outDir: 'dist',
     },

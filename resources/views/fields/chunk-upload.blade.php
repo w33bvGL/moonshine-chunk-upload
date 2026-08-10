@@ -2,217 +2,147 @@
     'element' => null,
     'inputName' => '',
     'inputValue' => '',
-    'uploadRoute' => '',
+    'urls' => [],
+    'csrfToken' => '',
+    'profile' => 'video',
     'extensions' => [],
     'accept' => '*',
     'color' => 'primary',
+    'chunkSize' => 8388608,
+    'concurrency' => 4,
     'size' => 'md',
-    'radial' => false,
-    'progressAttributes' => [],
+    'debug' => false,
+    'title' => 'Upload file',
+    'btnText' => 'Choose file',
 ])
 
-@once
-    <script src="https://cdn.jsdelivr.net/npm/resumablejs@1.1.0/resumable.min.js"></script>
-    <script>
-        document.addEventListener('alpine:init', () => {
-            Alpine.data('chunkUploader', (config) => ({
-                uploadUrl: config.uploadUrl,
-                csrfToken: config.csrfToken,
-                allowedExtensions: config.extensions || [],
-                state: 'idle', // idle, uploading, assembly, success, error
-                progress: 0,
-                filePath: config.initialValue,
-                fileName: config.initialValue ? config.initialValue.split('/').pop() : '',
-                errorMessage: '',
-                resumable: null,
-                isDragging: false,
+<div x-data='chunkUploader({
+    urls: @json($urls),
+    csrfToken: "{{ $csrfToken }}",
+    profile: "{{ $profile }}",
+    initialValue: "{{ $inputValue }}",
+    chunkSize: "{{ $chunkSize }}",
+    concurrency: "{{ $concurrency }}"
+})' class="space-y-4">
 
-                init() {
-                    if (this.filePath) {
-                        this.state = 'success';
-                        this.progress = 100;
-                    }
-                    this.initResumable();
-                },
-
-                initResumable() {
-                    if (!this.uploadUrl) {
-                        this.handleError('Route missing');
-                        return;
-                    }
-
-                    this.resumable = new Resumable({
-                        target: this.uploadUrl,
-                        query: { _token: this.csrfToken },
-                        fileType: this.allowedExtensions.length > 0 ? this.allowedExtensions : undefined,
-                        chunkSize: 2 * 1024 * 1024, // 2MB чанки
-                        headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': this.csrfToken },
-                        testChunks: false,
-                        throttleProgressCallbacks: 1,
-                    });
-
-                    if (this.$refs.dropZone) this.resumable.assignDrop(this.$refs.dropZone);
-
-                    this.resumable.on('fileAdded', (file) => {
-                        this.state = 'uploading';
-                        this.fileName = file.fileName;
-                        this.errorMessage = '';
-                        this.toggleFormSubmit(true);
-                        this.resumable.upload();
-                    });
-
-                    this.resumable.on('fileProgress', (file) => {
-                        this.progress = Math.floor(file.progress() * 100);
-                        if (this.progress >= 100) this.state = 'assembly';
-                    });
-
-                    this.resumable.on('fileSuccess', (file, message) => {
-                        try {
-                            const response = JSON.parse(message);
-                            this.filePath = response.path;
-                            this.state = 'success';
-                            this.toggleFormSubmit(false);
-                        } catch (e) { this.handleError('Server Error'); }
-                    });
-
-                    this.resumable.on('error', () => this.handleError('Upload Error'));
-                    this.resumable.on('fileError', () => this.handleError('File Error'));
-                },
-
-                handleNativeSelect(e) {
-                    if (e.target.files.length > 0 && this.resumable) {
-                        this.resumable.addFiles(e.target.files);
-                    }
-                    e.target.value = '';
-                },
-
-                handleError(msg) {
-                    this.state = 'error';
-                    this.errorMessage = msg;
-                    this.toggleFormSubmit(false);
-                    if(this.resumable) this.resumable.cancel();
-                },
-
-                reset() {
-                    if (this.resumable) this.resumable.cancel();
-                    this.state = 'idle'; this.filePath = ''; this.fileName = ''; this.progress = 0;
-                },
-
-                toggleFormSubmit(disabled) {
-                    const btn = this.$el.closest('form')?.querySelector('button[type="submit"]');
-                    if(btn) btn.disabled = disabled;
-                }
-            }));
-        });
-    </script>
-@endonce
-
-<x-moonshine::card class="w-full">
-    <div x-data='chunkUploader({
-            uploadUrl: "{{ $uploadRoute }}",
-            initialValue: "{{ $inputValue }}",
-            csrfToken: "{{ csrf_token() }}",
-            extensions: @json($extensions)
-        })'
-    >
-        {{-- Скрытый инпут с путем к файлу (для формы) --}}
+    <x-moonshine::card class="w-full overflow-hidden">
         <input type="hidden" name="{{ $inputName }}" x-model="filePath">
+        <input type="file" x-ref="fileInput" class="hidden" accept="{{ $accept }}" x-on:change="handleFileSelect($event.target.files)">
 
-        {{-- Скрытый нативный инпут (для выбора файла) --}}
-        <input type="file" x-ref="nativeFile" class="hidden" accept="{{ $accept }}" @change="handleNativeSelect">
-
-        {{-- ЗОНА ДРОПА --}}
-        <div x-ref="dropZone"
-             class="relative w-full min-h-[260px] flex flex-col items-center justify-center rounded-xl border-2 border-dashed transition-all duration-300 gap-6 p-8 group"
-             :class="{
-                 'border-{{ $color }} bg-{{ $color }}/5': state === 'uploading' || state === 'assembly',
-                 'border-gray-300 dark:border-gray-600 hover:border-{{ $color }}/50': state === 'idle',
-                 'border-green-500 bg-green-50 dark:bg-green-900/10': state === 'success',
-                 'border-red-500 bg-red-50 dark:bg-red-900/10': state === 'error'
-             }"
-             @dragover.prevent="isDragging = true"
-             @dragleave.prevent="isDragging = false"
-             @drop.prevent="isDragging = false"
+        <div
+            class="relative w-full min-h-[280px] flex flex-col items-center justify-center rounded-xl border-2 border-dashed transition-all duration-500 p-8 group"
+            x-bind:class="{
+                'border-{{ $color }} bg-{{ $color }}/5 shadow-inner': state === 'uploading' || isDragging || state === 'assembly',
+                'border-gray-300 dark:border-gray-600 hover:border-{{ $color }}/50': state === 'idle' && !isDragging,
+                'border-green-500 bg-green-50 dark:bg-green-900/10': state === 'success',
+                'border-red-500 bg-red-50 dark:bg-red-900/10': state === 'error'
+            }"
+            x-on:dragover.prevent="isDragging = true"
+            x-on:dragleave.prevent="isDragging = false"
+            x-on:drop.prevent="isDragging = false; handleFileSelect($event.dataTransfer.files)"
         >
-
-            {{-- 1. ОЖИДАНИЕ (IDLE) --}}
-            <div x-show="state === 'idle'" class="text-center animate-fade-in">
-                <div class="bg-{{ $color }}/10 p-6 rounded-full mb-5 inline-block group-hover:scale-110 transition-transform duration-300">
-                    <x-moonshine::icon icon="c.video-camera" size="10" class="text-{{ $color }}" />
-                </div>
-
-                <h3 class="text-xl font-bold text-gray-800 dark:text-gray-100 mb-2">
-                    Загрузка видео
-                </h3>
-
-                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6 max-w-xs mx-auto">
-                    Перетащите файл сюда или нажмите кнопку ниже.
-                    @if(!empty($extensions))
-                        <br><span class="opacity-70 text-xs">{{ implode(', ', $extensions) }}</span>
-                    @endif
-                </p>
-
-                <x-moonshine::link-button :color="$color" @click="$refs.nativeFile.click()">
-                    <x-moonshine::icon icon="c.folder-open" class="w-4 h-4 mr-2"/>
-                    Выбрать файл
-                </x-moonshine::link-button>
+            {{-- IDLE --}}
+            <div x-show="state === 'idle'" class="text-center animate-fade-in" x-transition>
+                <x-moonshine::layout.grid>
+                    <x-moonshine::layout.column colSpan="12">
+                        <x-moonshine::layout.flex :justifyAlign="'center'">
+                            <x-moonshine::icon icon="c.cloud-arrow-up" :size="10" class="text-{{ $color }}" />
+                        </x-moonshine::layout.flex>
+                    </x-moonshine::layout.column>
+                    <x-moonshine::layout.column colSpan="12">
+                        <x-moonshine::heading h="3">{{ $title }}</x-moonshine::heading>
+                        <p class="mb-3">Drag & drop a file here, or select one manually</p>
+                        <x-moonshine::layout.divider/>
+                    </x-moonshine::layout.column>
+                    <x-moonshine::layout.column colSpan="12">
+                        <x-moonshine::link-button :color="$color" x-on:click.prevent="$refs.fileInput.click()">
+                            <x-moonshine::icon icon="c.folder-open"/>
+                            {{ $btnText }}
+                        </x-moonshine::link-button>
+                    </x-moonshine::layout.column>
+                </x-moonshine::layout.grid>
             </div>
 
-            {{-- 2. ЗАГРУЗКА (UPLOADING / ASSEMBLY) --}}
-            <div x-show="state === 'uploading' || state === 'assembly'" class="w-full max-w-sm text-center flex flex-col items-center" style="display: none;">
-                <div class="mb-6">
-                    <template x-if="state === 'assembly'">
-                        <div class="flex flex-col items-center gap-3 animate-pulse">
-                            <x-moonshine::spinner :color="$color" size="lg" />
-                            <span class="text-lg font-bold text-gray-700 dark:text-gray-200">Сборка на сервере...</span>
+            {{-- UPLOADING / ASSEMBLY --}}
+            <div x-show="state === 'uploading' || state === 'assembly'" class="w-full max-w-md text-center" style="display: none;" x-transition>
+                <div class="mb-6 relative inline-block">
+                    <template x-if="state === 'uploading'">
+                        <div class="animate-bounce">
+                            <x-moonshine::icon icon="c.arrow-up-tray" size="12" class="text-{{ $color }}" />
                         </div>
                     </template>
-
-                    <template x-if="state === 'uploading'">
-                        <div class="text-2xl font-black text-{{ $color }}" x-text="progress + '%'"></div>
+                    <template x-if="state === 'assembly'">
+                        <div class="animate-spin">
+                            <x-moonshine::icon icon="c.arrow-path" size="12" class="text-{{ $color }}" />
+                        </div>
                     </template>
                 </div>
-
-                {{-- ГЛАВНЫЙ ФИКС: Атрибуты Alpine прокидываются через массив --}}
-                <x-moonshine::progress-bar
-                        :color="$color"
-                        :size="$size"
-                        :radial="$radial"
-                        :value="0"
-                        {{ $attributes->merge($progressAttributes) }}
-                        class="w-full"
-                >
-                    <span x-text="progress + '%'"></span>
-                </x-moonshine::progress-bar>
-
-                <div class="mt-4 text-xs font-mono text-gray-400 truncate w-full" x-text="fileName"></div>
+                <h4 class="text-lg font-bold mb-4" x-text="state === 'assembly' ? 'Assembling file...' : 'Uploading chunks'"></h4>
+                <div class="space-y-2">
+                    <div class="flex justify-between text-xs font-bold px-1">
+                        <span class="text-gray-400" x-text="progress + '%'"></span>
+                        <span class="text-gray-400" x-text="uploadedHuman"></span>
+                        <span class="text-{{ $color }}" x-text="state === 'assembly' ? 'Finalizing' : speedHuman"></span>
+                    </div>
+                    <div class="progress progress-{{ $size }} bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                        <div class="progress-bar progress-bar--{{ $color }} h-full transition-all duration-300" x-bind:style="'width: ' + progress + '%'"></div>
+                    </div>
+                </div>
+                <p class="mt-4 text-[10px] text-gray-400 truncate" x-text="fileName"></p>
             </div>
 
-            {{-- 3. УСПЕХ (SUCCESS) --}}
-            <div x-show="state === 'success'" class="w-full text-center animate-fade-in" style="display: none;">
-                <div class="bg-green-100 dark:bg-green-900/30 p-5 rounded-full inline-block mb-4">
-                    <x-moonshine::icon icon="c.check-badge" size="12" class="text-green-600" />
-                </div>
-                <div class="mb-6">
-                    <h3 class="text-lg font-bold text-gray-800 dark:text-white">Готово!</h3>
-                    <p class="text-sm text-green-600 font-medium break-all px-4" x-text="fileName || 'Файл загружен'"></p>
-                </div>
-                <x-moonshine::link-button color="gray" size="sm" @click="reset">
-                    <x-moonshine::icon icon="c.arrow-path" class="w-4 h-4 mr-2"/>
-                    Загрузить другой
-                </x-moonshine::link-button>
+            {{-- SUCCESS --}}
+            <div x-show="state === 'success'" class="text-center animate-fade-in" style="display: none;" x-transition>
+                <x-moonshine::icon icon="c.check-circle" size="12" class="text-green-500 mb-2" />
+                <h3 class="text-xl font-bold text-green-600 mb-4">Uploaded successfully!</h3>
+                <x-moonshine::link-button color="gray" size="sm" x-on:click="reset" outline>Replace file</x-moonshine::link-button>
             </div>
 
-            {{-- 4. ОШИБКА (ERROR) --}}
-            <div x-show="state === 'error'" class="text-center" style="display: none;">
-                <div class="bg-red-100 dark:bg-red-900/30 p-4 rounded-full inline-block mb-4">
-                    <x-moonshine::icon icon="c.exclamation-triangle" size="10" class="text-red-500" />
+            {{-- ERROR --}}
+            <div x-show="state === 'error'" class="text-center animate-fade-in" style="display: none;" x-transition>
+                <x-moonshine::icon icon="c.x-circle" size="12" class="text-red-500 mb-2" />
+                <h3 class="text-xl font-bold text-red-600 mb-2">Error</h3>
+                <p class="text-xs text-red-500 mb-6 font-bold" x-text="errorMessage"></p>
+                <div class="flex items-center justify-center gap-3">
+                    <template x-if="canResume">
+                        <x-moonshine::link-button :color="$color" size="sm" x-on:click="resume">Resume upload</x-moonshine::link-button>
+                    </template>
+                    <x-moonshine::link-button color="error" size="sm" x-on:click="reset">Start over</x-moonshine::link-button>
                 </div>
-                <h3 class="text-lg font-bold text-red-500 mb-2">Ошибка</h3>
-                <p class="text-sm text-red-400 mb-6" x-text="errorMessage"></p>
-                <x-moonshine::link-button color="error" @click="reset">Попробовать снова</x-moonshine::link-button>
             </div>
-
         </div>
-    </div>
-</x-moonshine::card>
+    </x-moonshine::card>
+
+    @if($debug)
+        <div class="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
+            <button type="button" x-on:click="showLogs = !showLogs" class="w-full flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800">
+                <span class="text-xs font-bold uppercase tracking-widest text-gray-600">Debug Mode</span>
+                <div x-bind:class="showLogs ? 'rotate-180' : ''" class="transition-transform duration-300">
+                    <x-moonshine::icon icon="c.chevron-down" size="4" />
+                </div>
+            </button>
+            <div x-show="showLogs" x-collapse class="p-0 bg-black text-[10px] font-mono text-green-400 max-h-60 overflow-y-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                    <tr class="bg-gray-900 text-gray-400 uppercase">
+                        <th class="p-2 border-b border-gray-800">Time</th>
+                        <th class="p-2 border-b border-gray-800">Chunk</th>
+                        <th class="p-2 border-b border-gray-800">Status</th>
+                        <th class="p-2 border-b border-gray-800">Response</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <template x-for="(log, i) in logs" :key="i">
+                        <tr class="border-b border-gray-900 hover:bg-white/5">
+                            <td class="p-2 text-gray-500" x-text="log.time"></td>
+                            <td class="p-2" x-text="log.chunk ? 'Chunk #' + log.chunk : log.info"></td>
+                            <td class="p-2 font-bold" x-bind:class="log.status === 'OK' ? 'text-green-500' : (log.status === 'RETRY' ? 'text-yellow-500' : 'text-red-500')" x-text="log.status"></td>
+                            <td class="p-2 text-gray-400 italic" x-text="log.resp || log.error"></td>
+                        </tr>
+                    </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    @endif
+</div>
