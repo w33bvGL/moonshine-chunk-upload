@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /*
- * Copyright Anidzen @w33bvgl
+ * Copyright @w33bvgl
  */
 
 use Illuminate\Support\Facades\Event;
@@ -117,7 +117,7 @@ it('loses the race when the upload is already being assembled', function (): voi
 });
 
 it('cannot be finalized twice', function (): void {
-    $path = $this->completeUpload(['twelve-bytes']);
+    $path     = $this->completeUpload(['twelve-bytes']);
     $uploadId = basename($path, '.mp4');
 
     $this->postJson(route('moonshine-chunk-upload.finalize'), ['upload_id' => $uploadId])

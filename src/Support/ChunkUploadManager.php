@@ -3,14 +3,14 @@
 declare(strict_types=1);
 
 /*
- * Copyright Anidzen @w33bvgl
+ * Copyright @w33bvgl
  */
 
 namespace W33bvgl\MoonShineChunkUpload\Support;
 
 use Closure;
 use Illuminate\Filesystem\FilesystemAdapter;
-use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -18,19 +18,9 @@ use League\Flysystem\Local\LocalFilesystemAdapter;
 use W33bvgl\MoonShineChunkUpload\Events\ChunkUploadCompleted;
 use W33bvgl\MoonShineChunkUpload\Exceptions\ChunkUploadException;
 
-/**
- * The whole chunked-upload protocol, independent of HTTP.
- *
- * Every upload owns a tmp directory holding one file per chunk plus a
- * `meta.json`, which makes parallel chunk requests race-free: a chunk is
- * written under a private name and renamed into place, so two retries of the
- * same index can never interleave. Finalize claims the directory with a single
- * rename before assembling, so a double submit loses the race instead of
- * assembling the same parts twice.
- */
 final readonly class ChunkUploadManager
 {
-    private const COPY_BUFFER = 1048576;
+    private const int COPY_BUFFER = 1048576;
 
     public function __construct(private ChunkUploadConfig $config) {}
 
@@ -87,7 +77,7 @@ final readonly class ChunkUploadManager
             chunkSize: $chunkSize,
             profile: $profile,
             keepOriginalName: $keepOriginalName,
-            createdAt: Carbon::now()->toIso8601String(),
+            createdAt: Date::now()->toIso8601String(),
         );
 
         $this->disk()->makeDirectory($this->config->tmpDirFor($uploadId));
@@ -110,7 +100,7 @@ final readonly class ChunkUploadManager
     {
         $meta = $this->meta($uploadId);
 
-        if ($meta === null) {
+        if (! $meta instanceof UploadMeta) {
             throw ChunkUploadException::notFound();
         }
 
@@ -168,7 +158,7 @@ final readonly class ChunkUploadManager
     {
         $meta = $this->meta($uploadId);
 
-        if ($meta === null) {
+        if (! $meta instanceof UploadMeta) {
             throw ChunkUploadException::notFound();
         }
 
@@ -293,7 +283,7 @@ final readonly class ChunkUploadManager
 
         $name = basename($path);
 
-        if ($rename !== null) {
+        if ($rename instanceof Closure) {
             $name = $this->sanitizeName($rename($name), pathinfo($name, PATHINFO_EXTENSION));
         }
 
@@ -325,11 +315,11 @@ final readonly class ChunkUploadManager
      */
     public function pruneTmp(?int $hours = null, bool $dryRun = false): int
     {
-        $threshold = Carbon::now()->subHours($hours ?? $this->config->tmpTtlHours);
+        $threshold = Date::now()->subHours($hours ?? $this->config->tmpTtlHours);
         $pruned    = 0;
 
         foreach ($this->disk()->directories($this->config->tmpDir) as $directory) {
-            $modifiedAt = Carbon::createFromTimestamp(File::lastModified($this->disk()->path($directory)));
+            $modifiedAt = Date::createFromTimestamp(File::lastModified($this->disk()->path($directory)));
 
             if ($modifiedAt->isAfter($threshold)) {
                 continue;
@@ -351,11 +341,11 @@ final readonly class ChunkUploadManager
      */
     public function pruneFinal(?int $hours = null, bool $dryRun = false): int
     {
-        $threshold = Carbon::now()->subHours($hours ?? $this->config->finalTtlHours);
+        $threshold = Date::now()->subHours($hours ?? $this->config->finalTtlHours);
         $pruned    = 0;
 
         foreach ($this->disk()->files($this->config->finalDir) as $file) {
-            if (Carbon::createFromTimestamp($this->disk()->lastModified($file))->isAfter($threshold)) {
+            if (Date::createFromTimestamp($this->disk()->lastModified($file))->isAfter($threshold)) {
                 continue;
             }
 

@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /*
- * Copyright Anidzen @w33bvgl
+ * Copyright @w33bvgl
  */
 
 namespace W33bvgl\MoonShineChunkUpload\Http\Controllers;
@@ -14,6 +14,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use W33bvgl\MoonShineChunkUpload\Exceptions\ChunkUploadException;
 use W33bvgl\MoonShineChunkUpload\Support\ChunkUploadManager;
+use W33bvgl\MoonShineChunkUpload\Support\UploadMeta;
 
 /**
  * The HTTP surface of the upload protocol:
@@ -81,7 +82,7 @@ final class ChunkUploadController extends Controller
         $uploadId = $this->uploadId($request);
         $meta     = $uploadId === null ? null : $this->manager->meta($uploadId);
 
-        if ($uploadId === null || $meta === null) {
+        if ($uploadId === null || ! $meta instanceof UploadMeta) {
             return $this->error(ChunkUploadException::notFound());
         }
 

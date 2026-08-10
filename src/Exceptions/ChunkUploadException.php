@@ -3,18 +3,13 @@
 declare(strict_types=1);
 
 /*
- * Copyright Anidzen @w33bvgl
+ * Copyright @w33bvgl
  */
 
 namespace W33bvgl\MoonShineChunkUpload\Exceptions;
 
 use RuntimeException;
 
-/**
- * Every failure the upload protocol can report, carrying the HTTP status the
- * controller should answer with — so the controller stays a thin translator
- * between the request and the manager.
- */
 final class ChunkUploadException extends RuntimeException
 {
     /**

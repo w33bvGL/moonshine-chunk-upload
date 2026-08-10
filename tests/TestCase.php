@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /*
- * Copyright Anidzen @w33bvgl
+ * Copyright @w33bvgl
  */
 
 namespace W33bvgl\MoonShineChunkUpload\Tests;
@@ -121,8 +121,7 @@ abstract class TestCase extends Orchestra
      * `$submitted` standing in for what the hidden input carried (null meaning
      * the field was not part of the request at all).
      *
-     * @param array<string, mixed> $item
-     *
+     * @param  array<string, mixed> $item
      * @return array<string, mixed>
      */
     protected function submitField(ChunkUpload $field, array $item, ?string $submitted): array

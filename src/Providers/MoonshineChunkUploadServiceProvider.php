@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /*
- * Copyright Anidzen @w33bvgl
+ * Copyright @w33bvgl
  */
 
 namespace W33bvgl\MoonShineChunkUpload\Providers;
@@ -16,6 +16,7 @@ use W33bvgl\MoonShineChunkUpload\Support\ChunkUploadManager;
 
 final class MoonshineChunkUploadServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->mergeConfigFrom(

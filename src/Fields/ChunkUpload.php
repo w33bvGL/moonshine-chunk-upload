@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /*
- * Copyright Anidzen @w33bvgl
+ * Copyright @w33bvgl
  */
 
 namespace W33bvgl\MoonShineChunkUpload\Fields;
@@ -108,7 +108,7 @@ class ChunkUpload extends Field implements RemovableContract
      */
     public function allowedExtensions(array $extensions): static
     {
-        $this->allowedExtensionsOverride = array_values(array_map('strtolower', $extensions));
+        $this->allowedExtensionsOverride = array_values(array_map(strtolower(...), $extensions));
 
         return $this;
     }
@@ -250,9 +250,9 @@ class ChunkUpload extends Field implements RemovableContract
                 path: $new,
                 toDisk: $this->getDisk(),
                 toDir: $this->getDir(),
-                rename: $this->customName === null
-                    ? null
-                    : fn (string $name): string => (string) \call_user_func($this->customName, $name, $this),
+                rename: $this->customName instanceof Closure
+                    ? fn (string $name): string => \call_user_func($this->customName, $name, $this)
+                    : null,
             );
 
             if ($stored === null) {
@@ -309,7 +309,7 @@ class ChunkUpload extends Field implements RemovableContract
             'debug' => $this->debug,
             'isRemovable' => $this->isRemovable(),
             'previewUrl' => \is_string($this->toValue()) && $this->toValue() !== ''
-                ? $this->getStorageUrl((string) $this->toValue())
+                ? $this->getStorageUrl($this->toValue())
                 : null,
             'accept' => $extensions === []
                 ? '*'
@@ -328,6 +328,6 @@ class ChunkUpload extends Field implements RemovableContract
 
     private function manager(): ChunkUploadManager
     {
-        return app(ChunkUploadManager::class);
+        return resolve(ChunkUploadManager::class);
     }
 }

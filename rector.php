@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+/*
+ * Copyright @w33bvgl
+ */
+
 use Rector\Config\RectorConfig;
 use Rector\Set\ValueObject\SetList;
 use RectorLaravel\Set\LaravelLevelSetList;

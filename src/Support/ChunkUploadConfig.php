@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /*
- * Copyright Anidzen @w33bvgl
+ * Copyright @w33bvgl
  */
 
 namespace W33bvgl\MoonShineChunkUpload\Support;
@@ -62,7 +62,7 @@ final readonly class ChunkUploadConfig
      */
     public function profileNames(): array
     {
-        return array_values(array_keys($this->profiles));
+        return array_keys($this->profiles);
     }
 
     /**
