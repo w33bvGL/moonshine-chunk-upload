@@ -127,7 +127,7 @@ ChunkUpload::make('Видео', 'source_path')
 | `debug()`                                      | Показать лог запросов по чанкам под полем                        |
 
 ## Протокол
-
+73b0565f0748db63fb8b959d057f7d199c530526
 ```
 POST   /moonshine-chunk-upload/init      {filename, size, total, chunk_size, profile, keep_name} -> {upload_id}
 POST   /moonshine-chunk-upload/chunk     ?upload_id&index   (сырое тело)                         -> {received}
