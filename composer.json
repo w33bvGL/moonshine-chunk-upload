@@ -1,14 +1,16 @@
 {
     "name": "w33bvgl/moonshine-chunk-upload",
-    "description": "Resumable, parallel chunked file upload field for MoonShine admin panel",
+    "description": "Resumable, parallel chunked file upload field for the MoonShine 4 admin panel.",
+    "version": "1.0.0",
     "keywords": [
         "laravel",
         "moonshine",
         "chunk-upload",
-        "resumable"
+        "resumable",
+        "upload"
     ],
     "type": "library",
-    "homepage": "https://github.com/w33bvGL",
+    "homepage": "https://github.com/w33bvGL/moonshine-chunk-upload",
     "license": "MIT",
     "support": {
         "issues": "https://github.com/w33bvGL/moonshine-chunk-upload/issues",
@@ -23,13 +25,22 @@
     ],
     "require": {
         "php": "^8.3",
-        "illuminate/support": "^11.0|^12.0|^13.0"
+        "ext-json": "*",
+        "illuminate/console": "^11.0|^12.0|^13.0",
+        "illuminate/events": "^11.0|^12.0|^13.0",
+        "illuminate/filesystem": "^11.0|^12.0|^13.0",
+        "illuminate/http": "^11.0|^12.0|^13.0",
+        "illuminate/routing": "^11.0|^12.0|^13.0",
+        "illuminate/support": "^11.0|^12.0|^13.0",
+        "moonshine/moonshine": "^4.0"
     },
     "require-dev": {
-        "phpunit/phpunit": "^11.0|^12.0",
-        "orchestra/testbench": "^9.0|^10.0|^11.0",
-        "rector/rector": "^1.0|^2.0",
-        "moonshine/moonshine": "^4.9"
+        "driftingly/rector-laravel": "^2.0",
+        "larastan/larastan": "^3.0",
+        "laravel/pint": "^1.29",
+        "orchestra/testbench": "^10.0|^11.0",
+        "pestphp/pest": "^4.0",
+        "rector/rector": "^2.0"
     },
     "autoload": {
         "psr-4": {
@@ -38,40 +49,31 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "W33bvgl\\MoonShineChunkUpload\\Tests\\": "tests/",
-            "Workbench\\App\\": "workbench/app/",
-            "Workbench\\Database\\Factories\\": "workbench/database/factories/",
-            "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
+            "W33bvgl\\MoonShineChunkUpload\\Tests\\": "tests/"
         }
-    },
-    "conflict": {
-        "moonshine/moonshine": "<4.0.0"
-    },
-    "scripts": {
-        "test": "vendor/bin/phpunit",
-        "rector": "vendor/bin/rector process --clear-cache",
-        "format": "vendor/bin/php-cs-fixer fix --allow-risky=yes",
-        "post-autoload-dump": [
-            "@clear",
-            "@prepare"
-        ],
-        "clear": "@php vendor/bin/testbench package:purge-skeleton --ansi",
-        "prepare": "@php vendor/bin/testbench package:discover --ansi",
-        "build": "@php vendor/bin/testbench workbench:build --ansi",
-        "serve": [
-            "Composer\\Config::disableProcessTimeout",
-            "@build",
-            "@php vendor/bin/testbench serve --ansi"
-        ],
-        "lint": [
-            "@php vendor/bin/phpstan analyse --verbose --ansi"
-        ]
     },
     "extra": {
         "laravel": {
             "providers": [
                 "W33bvgl\\MoonShineChunkUpload\\Providers\\MoonshineChunkUploadServiceProvider"
             ]
+        }
+    },
+    "scripts": {
+        "rector": ["rector process --dry-run"],
+        "rector:fix": ["rector process"],
+        "lint": ["pint --parallel"],
+        "lint:check": ["pint --parallel --test"],
+        "analyse": ["phpstan analyse --memory-limit=512M"],
+        "test": ["pest"],
+        "check": ["@rector:fix", "@lint", "@analyse", "@test"]
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
         }
     }
 }

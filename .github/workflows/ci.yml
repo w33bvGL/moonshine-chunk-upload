@@ -1,0 +1,108 @@
+name: CI CD
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+
+env:
+  PHP_VERSION: '8.4'
+  NODE_VERSION: 22
+
+jobs:
+  rector:
+    name: Verify / Rector
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-project
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+      - run: composer rector
+
+  lint:
+    name: Verify / Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-project
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+      - run: composer lint:check
+
+  analyse:
+    name: Verify / Analyse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-project
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+      - run: composer analyse
+
+  test:
+    name: Verify / Test (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-project
+        with:
+          php-version: ${{ matrix.php }}
+      - run: composer test
+
+  build:
+    name: Verify / Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+      - name: Ensure the committed bundle is up to date
+        run: |
+          if ! git diff --quiet -- public/chunk-upload.js; then
+            echo "::error::public/chunk-upload.js is stale — run 'npm run build' and commit the result."
+            git diff --stat -- public/chunk-upload.js
+            exit 1
+          fi
+
+  publish:
+    name: Publish
+    needs: [rector, lint, analyse, test, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-project
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          fetch-depth: '0'
+
+      - name: Detect and tag new version
+        id: check_version
+        uses: salsify/action-detect-and-tag-new-version@v2
+        with:
+          version-command: |
+            php -r "echo json_decode(file_get_contents('composer.json'))->version;"
+          tag-template: 'v{VERSION}'
+
+      - name: Create GitHub Release
+        if: steps.check_version.outputs.tag
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.check_version.outputs.tag }}
+          name: Release ${{ steps.check_version.outputs.tag }}
+          generate_release_notes: true

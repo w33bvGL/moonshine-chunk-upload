@@ -1,10 +1,10 @@
-.idea
-
-/app
 /node_modules
 /vendor
-
-.phpunit.result.cache
 /composer.lock
 /package-lock.json
-/workbench/database/*.sqlite
+/.phpunit.cache
+.phpunit.result.cache
+/tests/storage
+.DS_Store
+/.idea
+/.claude/settings.local.json

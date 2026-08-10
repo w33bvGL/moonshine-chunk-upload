@@ -1,0 +1,33 @@
+{
+    "preset": "laravel",
+    "exclude": [
+        "vendor",
+        "node_modules",
+        "public",
+        "tests/storage"
+    ],
+    "rules": {
+        "declare_strict_types": true,
+        "header_comment": {
+            "header": "Copyright Anidzen @w33bvgl",
+            "comment_type": "comment",
+            "location": "after_declare_strict",
+            "separate": "both"
+        },
+        "binary_operator_spaces": {
+            "operators": {
+                "=": "align"
+            }
+        },
+        "trailing_comma_in_multiline": {
+            "elements": ["arrays", "parameters"]
+        },
+        "no_superfluous_phpdoc_tags": false,
+        "blank_line_after_opening_tag": true,
+        "blank_line_before_statement": true,
+        "no_empty_phpdoc": true,
+        "phpdoc_align": true,
+        "phpdoc_order": true,
+        "phpdoc_no_empty_return": true
+    }
+}

@@ -1,32 +1,16 @@
 services:
-  tests:
-    container_name: tests
+  sandbox:
     build:
       context: .
-      dockerfile: Dockerfile
-    volumes:
-      - .:/var/www
-    environment:
-      - "APP_ENV=testing"
-      - "DB_CONNECTION=sqlite"
-      - "DB_DATABASE=:memory:"
-    tty: true
-    stdin_open: true
-    command: tail -f /dev/null
-
-  ui:
-    container_name: ui
-    build:
-      context: .
-      dockerfile: Dockerfile
+    container_name: moonshine-chunk-upload-sandbox
     ports:
-      - "8080:8080"
+      - "${SANDBOX_PORT:-8000}:8000"
     volumes:
-      - .:/var/www
+      - .:/var/www/package
+      - sandbox-app:/var/www/sandbox
     environment:
-      - "APP_ENV=testing"
-      - "DB_CONNECTION=sqlite"
-      - "DB_DATABASE=storage/database.sqlite"
-    tty: true
-    stdin_open: true
-    command: vendor/bin/testbench serve --host=0.0.0.0 --port=8080
+      DEMO_PROJECT_REPO: ${DEMO_PROJECT_REPO:-https://github.com/moonshine-software/demo-project.git}
+      DEMO_PROJECT_REF: ${DEMO_PROJECT_REF:-4.0}
+
+volumes:
+  sandbox-app:

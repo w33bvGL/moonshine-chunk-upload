@@ -9,21 +9,42 @@
     'accept' => '*',
     'color' => 'primary',
     'chunkSize' => 8388608,
+    'maxFileSize' => null,
     'concurrency' => 4,
+    'keepName' => false,
     'size' => 'md',
     'debug' => false,
-    'title' => 'Upload file',
-    'btnText' => 'Choose file',
+    'isRemovable' => false,
+    'previewUrl' => null,
+    'title' => '',
+    'icon' => 'c.cloud-arrow-up',
+    'btnText' => '',
 ])
 
-<div x-data='chunkUploader({
-    urls: @json($urls),
-    csrfToken: "{{ $csrfToken }}",
-    profile: "{{ $profile }}",
-    initialValue: "{{ $inputValue }}",
-    chunkSize: "{{ $chunkSize }}",
-    concurrency: "{{ $concurrency }}"
-})' class="space-y-4">
+@php
+    $labels = [
+        'too_large' => __('moonshine-chunk-upload::ui.too_large'),
+        'bad_extension' => __('moonshine-chunk-upload::ui.bad_extension'),
+        'network_error' => __('moonshine-chunk-upload::ui.network_error'),
+        'server_error' => __('moonshine-chunk-upload::ui.server_error'),
+    ];
+
+    $jsConfig = [
+        'urls' => $urls,
+        'csrfToken' => $csrfToken,
+        'profile' => $profile,
+        'initialValue' => (string) $inputValue,
+        'chunkSize' => $chunkSize,
+        'maxFileSize' => $maxFileSize,
+        'concurrency' => $concurrency,
+        'keepName' => $keepName,
+        'extensions' => $extensions,
+        'storageKey' => 'moonshine-chunk-upload:' . sha1(request()->path() . '|' . $inputName),
+        'labels' => $labels,
+    ];
+@endphp
+
+<div x-data="chunkUploader(@js($jsConfig))" class="space-y-4">
 
     <x-moonshine::card class="w-full overflow-hidden">
         <input type="hidden" name="{{ $inputName }}" x-model="filePath">
@@ -33,7 +54,7 @@
             class="relative w-full min-h-[280px] flex flex-col items-center justify-center rounded-xl border-2 border-dashed transition-all duration-500 p-8 group"
             x-bind:class="{
                 'border-{{ $color }} bg-{{ $color }}/5 shadow-inner': state === 'uploading' || isDragging || state === 'assembly',
-                'border-gray-300 dark:border-gray-600 hover:border-{{ $color }}/50': state === 'idle' && !isDragging,
+                'border-gray-300 dark:border-gray-600 hover:border-{{ $color }}/50': (state === 'idle' || state === 'resumable') && !isDragging,
                 'border-green-500 bg-green-50 dark:bg-green-900/10': state === 'success',
                 'border-red-500 bg-red-50 dark:bg-red-900/10': state === 'error'
             }"
@@ -46,21 +67,36 @@
                 <x-moonshine::layout.grid>
                     <x-moonshine::layout.column colSpan="12">
                         <x-moonshine::layout.flex :justifyAlign="'center'">
-                            <x-moonshine::icon icon="c.cloud-arrow-up" :size="10" class="text-{{ $color }}" />
+                            <x-moonshine::icon :icon="$icon" :size="10" class="text-{{ $color }}" />
                         </x-moonshine::layout.flex>
                     </x-moonshine::layout.column>
                     <x-moonshine::layout.column colSpan="12">
                         <x-moonshine::heading h="3">{{ $title }}</x-moonshine::heading>
-                        <p class="mb-3">Drag & drop a file here, or select one manually</p>
+                        <p class="mb-3">{{ __('moonshine-chunk-upload::ui.hint') }}</p>
                         <x-moonshine::layout.divider/>
                     </x-moonshine::layout.column>
                     <x-moonshine::layout.column colSpan="12">
-                        <x-moonshine::link-button :color="$color" x-on:click.prevent="$refs.fileInput.click()">
+                        <x-moonshine::link-button :color="$color" x-on:click.prevent="pickFile()">
                             <x-moonshine::icon icon="c.folder-open"/>
                             {{ $btnText }}
                         </x-moonshine::link-button>
                     </x-moonshine::layout.column>
                 </x-moonshine::layout.grid>
+            </div>
+
+            {{-- RESUMABLE: an upload interrupted before the page was reloaded --}}
+            <div x-show="state === 'resumable'" class="text-center animate-fade-in" style="display: none;" x-transition>
+                <x-moonshine::icon icon="c.arrow-path" size="12" class="text-{{ $color }} mb-2" />
+                <h3 class="text-lg font-bold mb-2">{{ $title }}</h3>
+                <p class="text-xs text-gray-500 mb-6" x-text="@js(__('moonshine-chunk-upload::ui.resumable')).replace(':name', fileName)"></p>
+                <div class="flex items-center justify-center gap-3">
+                    <x-moonshine::link-button :color="$color" size="sm" x-on:click.prevent="pickFile()">
+                        {{ __('moonshine-chunk-upload::ui.resume') }}
+                    </x-moonshine::link-button>
+                    <x-moonshine::link-button color="gray" size="sm" outline x-on:click.prevent="forgetPending(); state = 'idle'; fileName = ''">
+                        {{ __('moonshine-chunk-upload::ui.start_over') }}
+                    </x-moonshine::link-button>
+                </div>
             </div>
 
             {{-- UPLOADING / ASSEMBLY --}}
@@ -77,12 +113,12 @@
                         </div>
                     </template>
                 </div>
-                <h4 class="text-lg font-bold mb-4" x-text="state === 'assembly' ? 'Assembling file...' : 'Uploading chunks'"></h4>
+                <h4 class="text-lg font-bold mb-4" x-text="state === 'assembly' ? @js(__('moonshine-chunk-upload::ui.assembling')) : @js(__('moonshine-chunk-upload::ui.uploading'))"></h4>
                 <div class="space-y-2">
                     <div class="flex justify-between text-xs font-bold px-1">
                         <span class="text-gray-400" x-text="progress + '%'"></span>
                         <span class="text-gray-400" x-text="uploadedHuman"></span>
-                        <span class="text-{{ $color }}" x-text="state === 'assembly' ? 'Finalizing' : speedHuman"></span>
+                        <span class="text-{{ $color }}" x-text="state === 'assembly' ? @js(__('moonshine-chunk-upload::ui.finalizing')) : speedHuman"></span>
                     </div>
                     <div class="progress progress-{{ $size }} bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                         <div class="progress-bar progress-bar--{{ $color }} h-full transition-all duration-300" x-bind:style="'width: ' + progress + '%'"></div>
@@ -94,20 +130,39 @@
             {{-- SUCCESS --}}
             <div x-show="state === 'success'" class="text-center animate-fade-in" style="display: none;" x-transition>
                 <x-moonshine::icon icon="c.check-circle" size="12" class="text-green-500 mb-2" />
-                <h3 class="text-xl font-bold text-green-600 mb-4">Uploaded successfully!</h3>
-                <x-moonshine::link-button color="gray" size="sm" x-on:click="reset" outline>Replace file</x-moonshine::link-button>
+                <h3 class="text-xl font-bold text-green-600 mb-2">{{ __('moonshine-chunk-upload::ui.success') }}</h3>
+                <p class="text-[10px] text-gray-400 mb-4 truncate" x-text="fileName"></p>
+                <div class="flex items-center justify-center gap-3">
+                    @if($previewUrl)
+                        <x-moonshine::link-button href="{{ $previewUrl }}" color="gray" size="sm" outline target="_blank">
+                            <x-moonshine::icon icon="c.eye"/>
+                        </x-moonshine::link-button>
+                    @endif
+                    <x-moonshine::link-button color="gray" size="sm" x-on:click.prevent="reset" outline>
+                        {{ __('moonshine-chunk-upload::ui.replace') }}
+                    </x-moonshine::link-button>
+                    @if($isRemovable)
+                        <x-moonshine::link-button color="error" size="sm" x-on:click.prevent="reset" outline>
+                            {{ __('moonshine-chunk-upload::ui.remove') }}
+                        </x-moonshine::link-button>
+                    @endif
+                </div>
             </div>
 
             {{-- ERROR --}}
             <div x-show="state === 'error'" class="text-center animate-fade-in" style="display: none;" x-transition>
                 <x-moonshine::icon icon="c.x-circle" size="12" class="text-red-500 mb-2" />
-                <h3 class="text-xl font-bold text-red-600 mb-2">Error</h3>
+                <h3 class="text-xl font-bold text-red-600 mb-2">{{ __('moonshine-chunk-upload::ui.error') }}</h3>
                 <p class="text-xs text-red-500 mb-6 font-bold" x-text="errorMessage"></p>
                 <div class="flex items-center justify-center gap-3">
                     <template x-if="canResume">
-                        <x-moonshine::link-button :color="$color" size="sm" x-on:click="resume">Resume upload</x-moonshine::link-button>
+                        <x-moonshine::link-button :color="$color" size="sm" x-on:click.prevent="resume">
+                            {{ __('moonshine-chunk-upload::ui.resume') }}
+                        </x-moonshine::link-button>
                     </template>
-                    <x-moonshine::link-button color="error" size="sm" x-on:click="reset">Start over</x-moonshine::link-button>
+                    <x-moonshine::link-button color="error" size="sm" x-on:click.prevent="reset">
+                        {{ __('moonshine-chunk-upload::ui.start_over') }}
+                    </x-moonshine::link-button>
                 </div>
             </div>
         </div>
@@ -116,7 +171,7 @@
     @if($debug)
         <div class="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
             <button type="button" x-on:click="showLogs = !showLogs" class="w-full flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800">
-                <span class="text-xs font-bold uppercase tracking-widest text-gray-600">Debug Mode</span>
+                <span class="text-xs font-bold uppercase tracking-widest text-gray-600">{{ __('moonshine-chunk-upload::ui.debug') }}</span>
                 <div x-bind:class="showLogs ? 'rotate-180' : ''" class="transition-transform duration-300">
                     <x-moonshine::icon icon="c.chevron-down" size="4" />
                 </div>
@@ -125,10 +180,10 @@
                 <table class="w-full text-left border-collapse">
                     <thead>
                     <tr class="bg-gray-900 text-gray-400 uppercase">
-                        <th class="p-2 border-b border-gray-800">Time</th>
-                        <th class="p-2 border-b border-gray-800">Chunk</th>
-                        <th class="p-2 border-b border-gray-800">Status</th>
-                        <th class="p-2 border-b border-gray-800">Response</th>
+                        <th class="p-2 border-b border-gray-800">{{ __('moonshine-chunk-upload::ui.log_time') }}</th>
+                        <th class="p-2 border-b border-gray-800">{{ __('moonshine-chunk-upload::ui.log_chunk') }}</th>
+                        <th class="p-2 border-b border-gray-800">{{ __('moonshine-chunk-upload::ui.log_status') }}</th>
+                        <th class="p-2 border-b border-gray-800">{{ __('moonshine-chunk-upload::ui.log_response') }}</th>
                     </tr>
                     </thead>
                     <tbody>

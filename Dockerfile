@@ -1,16 +1,35 @@
 FROM php:8.4-cli-alpine
 
 RUN apk add --no-cache \
-    sqlite-dev \
-    libzip-dev \
-    zip \
-    unzip \
-    && docker-php-ext-install pdo pdo_sqlite zip
+        git \
+        unzip \
+        sqlite \
+        sqlite-dev \
+        icu-libs \
+        icu-dev \
+        oniguruma-dev \
+        libzip-dev \
+        libpng-dev \
+        freetype-dev \
+        libjpeg-turbo-dev \
+        $PHPIZE_DEPS \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j"$(nproc)" pdo_sqlite intl mbstring zip gd bcmath exif \
+    && apk del $PHPIZE_DEPS \
+    && rm -rf /var/cache/apk/*
 
-COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+# Chunks arrive as raw request bodies, so the PHP limits have to clear the
+# largest chunk the sandbox offers.
+RUN printf "post_max_size=64M\nupload_max_filesize=64M\nmemory_limit=512M\n" \
+    > /usr/local/etc/php/conf.d/chunk-upload.ini
 
-WORKDIR /var/www
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-COPY composer.json ./
+WORKDIR /var/www/sandbox
 
-COPY . .
+COPY docker/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint
+RUN chmod +x /usr/local/bin/sandbox-entrypoint
+
+EXPOSE 8000
+
+ENTRYPOINT ["sandbox-entrypoint"]

@@ -9,59 +9,39 @@ declare(strict_types=1);
 namespace W33bvgl\MoonShineChunkUpload\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Filesystem\FilesystemAdapter;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Storage;
+use W33bvgl\MoonShineChunkUpload\Support\ChunkUploadManager;
 
 final class PruneChunkUploadsCommand extends Command
 {
-    protected $signature = 'chunk-upload:prune';
+    protected $signature = 'chunk-upload:prune
+                            {--tmp-hours= : Override the tmp TTL from the config}
+                            {--final-hours= : Override the finalized-file TTL from the config}
+                            {--dry-run : Report what would be deleted without deleting anything}';
 
     protected $description = 'Delete stale temporary chunks and orphaned assembled files';
 
-    public function handle(): int
+    public function handle(ChunkUploadManager $manager): int
     {
-        /** @var FilesystemAdapter $disk */
-        $disk = Storage::disk((string) config('moonshine-chunk-upload.disk'));
+        $dryRun = (bool) $this->option('dry-run');
 
-        $prunedTmp   = $this->pruneTmpDirectories($disk);
-        $prunedFinal = $this->pruneFinalFiles($disk);
+        $tmpHours   = $this->hours('tmp-hours');
+        $finalHours = $this->hours('final-hours');
 
-        $this->info("Pruned {$prunedTmp} stale tmp upload(s), {$prunedFinal} orphaned final file(s).");
+        $prunedTmp   = $manager->pruneTmp($tmpHours, $dryRun);
+        $prunedFinal = $manager->pruneFinal($finalHours, $dryRun);
+
+        $this->info(
+            ($dryRun ? 'Would prune ' : 'Pruned ')
+            ."{$prunedTmp} stale tmp upload(s), {$prunedFinal} orphaned final file(s)."
+        );
 
         return self::SUCCESS;
     }
 
-    private function pruneTmpDirectories(FilesystemAdapter $disk): int
+    private function hours(string $option): ?int
     {
-        $threshold = Carbon::now()->subHours((int) config('moonshine-chunk-upload.tmp_ttl_hours'));
-        $pruned    = 0;
+        $value = $this->option($option);
 
-        foreach ($disk->directories((string) config('moonshine-chunk-upload.tmp_dir')) as $directory) {
-            $modifiedAt = Carbon::createFromTimestamp(File::lastModified($disk->path($directory)));
-
-            if ($modifiedAt->isBefore($threshold)) {
-                $disk->deleteDirectory($directory);
-                $pruned++;
-            }
-        }
-
-        return $pruned;
-    }
-
-    private function pruneFinalFiles(FilesystemAdapter $disk): int
-    {
-        $threshold = Carbon::now()->subHours((int) config('moonshine-chunk-upload.final_ttl_hours'));
-        $pruned    = 0;
-
-        foreach ($disk->files((string) config('moonshine-chunk-upload.final_dir')) as $file) {
-            if (Carbon::createFromTimestamp($disk->lastModified($file))->isBefore($threshold)) {
-                $disk->delete($file);
-                $pruned++;
-            }
-        }
-
-        return $pruned;
+        return $value === null || $value === '' ? null : (int) $value;
     }
 }
