@@ -32,7 +32,7 @@ only. Set your own auth/permission middleware in the published `config/moonshine
 use W33bvgl\MoonShineChunkUpload\Fields\ChunkUpload;
 
 ChunkUpload::make('Video', 'source_path')
-    ->profile('video')       // extension whitelist from config('moonshine-chunk-upload.profiles')
+    ->profile('video')
     ->disk('public')
     ->chunkSize(8 * 1024 * 1024)
     ->concurrency(4);
