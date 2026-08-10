@@ -21,7 +21,6 @@ it('uploads a file across parallel chunks and assembles it', function (): void {
         'chunk_size' => 12,
     ])->assertOk()->json('upload_id');
 
-    // Out of order, as parallel chunk requests would arrive.
     foreach ([2, 0, 1] as $index) {
         $this->sendChunk($uploadId, $index + 1, $chunks[$index])->assertOk();
     }
@@ -38,7 +37,6 @@ it('uploads a file across parallel chunks and assembles it', function (): void {
     expect(Storage::disk('local')->get($path))->toBe($content)
         ->and($path)->toStartWith('final/');
 
-    // The staging directory is gone once the parts have been consumed.
     expect(Storage::disk('local')->exists("tmp/{$uploadId}"))->toBeFalse();
 });
 
