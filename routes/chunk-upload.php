@@ -8,12 +8,15 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Route;
 use W33bvgl\MoonShineChunkUpload\Http\Controllers\ChunkUploadController;
+use W33bvgl\MoonShineChunkUpload\Support\ChunkUploadConfig;
 
-Route::prefix(config('moonshine-chunk-upload.route.prefix'))
-    ->middleware(config('moonshine-chunk-upload.route.middleware'))
-    ->name(config('moonshine-chunk-upload.route.name'))
+$config = resolve(ChunkUploadConfig::class);
+
+Route::prefix($config->routePrefix)
+    ->middleware($config->routeMiddleware)
+    ->name($config->routeName)
     ->controller(ChunkUploadController::class)
-    ->group(function (): void {
+    ->group(static function (): void {
         Route::post('init', 'init')->name('init');
         Route::post('chunk', 'chunk')->name('chunk');
         Route::get('status', 'status')->name('status');

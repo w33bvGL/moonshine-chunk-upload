@@ -15,7 +15,7 @@ use MoonShine\Laravel\Providers\MoonShineServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
 use Override;
 use W33bvgl\MoonShineChunkUpload\Fields\ChunkUpload;
-use W33bvgl\MoonShineChunkUpload\Providers\MoonshineChunkUploadServiceProvider;
+use W33bvgl\MoonShineChunkUpload\Providers\MoonShineChunkUploadServiceProvider;
 use W33bvgl\MoonShineChunkUpload\Support\ChunkUploadConfig;
 use W33bvgl\MoonShineChunkUpload\Support\ChunkUploadManager;
 
@@ -45,7 +45,7 @@ abstract class TestCase extends Orchestra
     {
         return [
             MoonShineServiceProvider::class,
-            MoonshineChunkUploadServiceProvider::class,
+            MoonShineChunkUploadServiceProvider::class,
         ];
     }
 
@@ -77,9 +77,6 @@ abstract class TestCase extends Orchestra
     }
 
     /**
-     * Re-reads the package config after a test has changed it: the config
-     * object is a singleton, so it has to be forgotten explicitly.
-     *
      * @param array<string, mixed> $values
      */
     protected function reconfigure(array $values): void
@@ -117,10 +114,6 @@ abstract class TestCase extends Orchestra
     }
 
     /**
-     * Runs the field's apply pipeline against a plain array "model", with
-     * `$submitted` standing in for what the hidden input carried (null meaning
-     * the field was not part of the request at all).
-     *
      * @param  array<string, mixed> $item
      * @return array<string, mixed>
      */
@@ -137,8 +130,6 @@ abstract class TestCase extends Orchestra
     }
 
     /**
-     * Runs a whole upload and returns the finalized path.
-     *
      * @param list<string> $chunks
      */
     protected function completeUpload(array $chunks, string $filename = 'video.mp4', bool $keepName = false): string

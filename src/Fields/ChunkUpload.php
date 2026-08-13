@@ -12,35 +12,33 @@ use Closure;
 use Illuminate\Contracts\Support\Renderable;
 use MoonShine\AssetManager\Js;
 use MoonShine\UI\Components\Link;
+use MoonShine\UI\Contracts\FileableContract;
 use MoonShine\UI\Contracts\RemovableContract;
 use MoonShine\UI\Fields\Field;
 use MoonShine\UI\Traits\Removable;
 use MoonShine\UI\Traits\WithStorage;
 use Override;
+use W33bvgl\MoonShineChunkUpload\Support\ChunkUploadConfig;
 use W33bvgl\MoonShineChunkUpload\Support\ChunkUploadManager;
 
 /**
- * A MoonShine field that uploads its file in parallel, resumable chunks.
- *
- * The browser talks to the package's own endpoints, which assemble the parts in
- * a staging directory; the form itself only carries the resulting path. On
- * apply, the field claims that file and moves it onto its own disk/dir — a
- * submitted value that is not a finalized upload of this package is discarded,
- * so the hidden input cannot be pointed at an arbitrary file.
- *
  * @method static static make(Closure|string|null $label = null, ?string $column = null, ?Closure $formatted = null)
  */
-class ChunkUpload extends Field implements RemovableContract
+class ChunkUpload extends Field implements FileableContract, RemovableContract
 {
     use Removable;
     use WithStorage;
+
+    protected const int MIN_CONCURRENCY = 1;
+
+    protected const int MAX_CONCURRENCY = 8;
 
     protected string $view = 'moonshine-chunk-upload::fields.chunk-upload';
 
     protected string $profile = 'video';
 
-    /** @var ?list<string> */
-    protected ?array $allowedExtensionsOverride = null;
+    /** @var list<string> */
+    protected array $allowedExtensions = [];
 
     protected string $color = 'primary';
 
@@ -52,48 +50,19 @@ class ChunkUpload extends Field implements RemovableContract
 
     protected bool $keepOriginalFileName = false;
 
-    protected bool $deleteFiles = true;
+    protected bool $isDeleteFiles = true;
+
+    protected bool $disableDownload = false;
 
     /** @var null|Closure(string, static): string */
     protected ?Closure $customName = null;
 
     protected ?string $title = null;
 
-    protected string $icon = 'c.cloud-arrow-up';
-
     protected ?string $btnText = null;
 
-    public function color(string $color): static
-    {
-        $this->color = $color;
+    protected string $icon = 'c.cloud-arrow-up';
 
-        return $this;
-    }
-
-    /**
-     * Bytes per chunk. Must not exceed `moonshine-chunk-upload.max_chunk_size`,
-     * and should stay under the web server's request body limit.
-     */
-    public function chunkSize(int $bytes): static
-    {
-        $this->chunkSize = max(1, $bytes);
-
-        return $this;
-    }
-
-    /**
-     * How many chunks may be in flight at once (1–8).
-     */
-    public function concurrency(int $parallelRequests): static
-    {
-        $this->concurrency = max(1, min(8, $parallelRequests));
-
-        return $this;
-    }
-
-    /**
-     * Extension profile from config/moonshine-chunk-upload.php (video / audio / subtitle / ...).
-     */
     public function profile(string $profile): static
     {
         $this->profile = $profile;
@@ -101,60 +70,68 @@ class ChunkUpload extends Field implements RemovableContract
         return $this;
     }
 
-    /**
-     * Restrict uploads to a specific extension list, overriding the profile default.
-     *
-     * @param list<string> $extensions
-     */
-    public function allowedExtensions(array $extensions): static
+    public function getProfile(): string
     {
-        $this->allowedExtensionsOverride = array_values(array_map(strtolower(...), $extensions));
+        return $this->profile;
+    }
+
+    /**
+     * @param list<string> $allowedExtensions
+     */
+    public function allowedExtensions(array $allowedExtensions): static
+    {
+        $this->allowedExtensions = array_values(array_map(
+            static fn (string $extension): string => mb_strtolower(trim($extension, '.')),
+            $allowedExtensions,
+        ));
 
         return $this;
     }
 
     /**
-     * Store the file under a sanitized version of the name it had on the client
-     * instead of the upload id.
+     * @return list<string>
      */
-    public function keepOriginalFileName(): static
+    public function getAllowedExtensions(): array
     {
-        $this->keepOriginalFileName = true;
+        return $this->allowedExtensions === []
+            ? $this->config()->extensionsFor($this->profile)
+            : $this->allowedExtensions;
+    }
+
+    public function isAllowedExtension(string $extension): bool
+    {
+        $extensions = $this->getAllowedExtensions();
+
+        return $extensions === [] || \in_array(mb_strtolower($extension), $extensions, true);
+    }
+
+    public function chunkSize(int $bytes): static
+    {
+        $this->chunkSize = max(1, $bytes);
 
         return $this;
     }
 
-    /**
-     * Rename the assembled file while it is moved onto this field's disk.
-     *
-     * @param Closure(string $name, static $ctx): string $callback
-     */
-    public function customName(Closure $callback): static
+    public function getChunkSize(): int
     {
-        $this->customName = $callback;
+        return min($this->chunkSize, $this->config()->maxChunkSize);
+    }
+
+    public function concurrency(int $parallelRequests): static
+    {
+        $this->concurrency = max(self::MIN_CONCURRENCY, min(self::MAX_CONCURRENCY, $parallelRequests));
 
         return $this;
     }
 
-    /**
-     * Keep the previously stored file on disk when the value is replaced or the
-     * record is deleted.
-     */
-    public function disableDeleteFiles(): static
+    public function getConcurrency(): int
     {
-        $this->deleteFiles = false;
-
-        return $this;
+        return $this->concurrency;
     }
 
-    public function isDeleteFiles(): bool
+    public function color(string $color): static
     {
-        return $this->deleteFiles;
-    }
-
-    public function title(string $title): static
-    {
-        $this->title = $title;
+        $this->color = $color;
 
         return $this;
     }
@@ -166,6 +143,13 @@ class ChunkUpload extends Field implements RemovableContract
         return $this;
     }
 
+    public function title(string $title): static
+    {
+        $this->title = $title;
+
+        return $this;
+    }
+
     public function btnText(string $text): static
     {
         $this->btnText = $text;
@@ -173,9 +157,6 @@ class ChunkUpload extends Field implements RemovableContract
         return $this;
     }
 
-    /**
-     * Render the per-chunk request log under the field.
-     */
     public function debug(bool $debug = true): static
     {
         $this->debug = $debug;
@@ -183,13 +164,63 @@ class ChunkUpload extends Field implements RemovableContract
         return $this;
     }
 
-    /**
-     * @return list<string>
-     */
-    public function getAllowedExtensions(): array
+    public function isDebug(): bool
     {
-        return $this->allowedExtensionsOverride
-            ?? $this->manager()->config()->extensionsFor($this->profile);
+        return $this->debug;
+    }
+
+    public function keepOriginalFileName(): static
+    {
+        $this->keepOriginalFileName = true;
+
+        return $this;
+    }
+
+    public function isKeepOriginalFileName(): bool
+    {
+        return $this->keepOriginalFileName;
+    }
+
+    /**
+     * @param Closure(string $name, static $ctx): string $name
+     */
+    public function customName(Closure $name): static
+    {
+        $this->customName = $name;
+
+        return $this;
+    }
+
+    /**
+     * @return null|Closure(string $name, static $ctx): string
+     */
+    public function getCustomName(): ?Closure
+    {
+        return $this->customName;
+    }
+
+    public function disableDeleteFiles(): static
+    {
+        $this->isDeleteFiles = false;
+
+        return $this;
+    }
+
+    public function isDeleteFiles(): bool
+    {
+        return $this->isDeleteFiles;
+    }
+
+    public function disableDownload(Closure|bool|null $condition = null): static
+    {
+        $this->disableDownload = (bool) (value($condition, $this) ?? true);
+
+        return $this;
+    }
+
+    public function canDownload(): bool
+    {
+        return ! $this->disableDownload;
     }
 
     #[Override]
@@ -209,21 +240,19 @@ class ChunkUpload extends Field implements RemovableContract
     #[Override]
     protected function resolvePreview(): Renderable|string
     {
-        $value = $this->toValue();
+        $value = $this->stringValue();
 
-        if (! \is_string($value) || $value === '') {
+        if ($value === '') {
             return '';
         }
 
-        return Link::make($this->getStorageUrl($value), basename($value))
-            ->blank()
-            ->render();
+        $name = basename($value);
+
+        return $this->canDownload()
+            ? Link::make($this->getStorageUrl($value), $name)->blank()->render()
+            : $name;
     }
 
-    /**
-     * Claims the finalized upload and stores its new path. A value that is
-     * neither the current one nor a finalized upload is ignored outright.
-     */
     #[Override]
     protected function resolveOnApply(): ?Closure
     {
@@ -241,7 +270,7 @@ class ChunkUpload extends Field implements RemovableContract
             }
 
             if ($new === '') {
-                $this->deleteStoredFile($old);
+                $this->deleteFile($old);
 
                 return data_set($item, $this->getColumn(), null);
             }
@@ -259,7 +288,7 @@ class ChunkUpload extends Field implements RemovableContract
                 return $item;
             }
 
-            $this->deleteStoredFile($old);
+            $this->deleteFile($old);
 
             return data_set($item, $this->getColumn(), $stored);
         };
@@ -268,11 +297,7 @@ class ChunkUpload extends Field implements RemovableContract
     #[Override]
     protected function resolveAfterDestroy(mixed $data): mixed
     {
-        $value = $this->toValue();
-
-        if (\is_string($value)) {
-            $this->deleteStoredFile($value);
-        }
+        $this->deleteFile($this->stringValue());
 
         return $data;
     }
@@ -280,44 +305,64 @@ class ChunkUpload extends Field implements RemovableContract
     #[Override]
     protected function viewData(): array
     {
+        $value      = $this->stringValue();
         $extensions = $this->getAllowedExtensions();
-        $config     = $this->manager()->config();
-        $routeName  = (string) config('moonshine-chunk-upload.route.name');
 
         return [
-            'element' => $this,
-            'inputName' => $this->getAttribute('name') ?? $this->getColumn(),
-            'inputValue' => $this->toValue(),
-            'csrfToken' => csrf_token(),
-            'urls' => [
-                'init' => route("{$routeName}init"),
-                'chunk' => route("{$routeName}chunk"),
-                'status' => route("{$routeName}status"),
-                'finalize' => route("{$routeName}finalize"),
-                'abort' => route("{$routeName}abort"),
-            ],
-            'profile' => $this->profile,
-            'extensions' => $extensions,
-            'chunkSize' => min($this->chunkSize, $config->maxChunkSize),
-            'maxFileSize' => $config->maxFileSize,
-            'concurrency' => $this->concurrency,
-            'keepName' => $this->keepOriginalFileName,
+            'inputName' => $this->getNameAttribute(),
             'color' => $this->color,
-            'title' => $this->title ?? (string) __('moonshine-chunk-upload::ui.title'),
             'icon' => $this->icon,
+            'title' => $this->title ?? (string) __('moonshine-chunk-upload::ui.title'),
             'btnText' => $this->btnText ?? (string) __('moonshine-chunk-upload::ui.choose'),
-            'debug' => $this->debug,
+            'accept' => $extensions === [] ? '*' : '.'.implode(',.', $extensions),
+            'isDebug' => $this->isDebug(),
             'isRemovable' => $this->isRemovable(),
-            'previewUrl' => \is_string($this->toValue()) && $this->toValue() !== ''
-                ? $this->getStorageUrl($this->toValue())
-                : null,
-            'accept' => $extensions === []
-                ? '*'
-                : '.'.implode(',.', $extensions),
+            'previewUrl' => $value !== '' && $this->canDownload() ? $this->getStorageUrl($value) : null,
+            'uploader' => $this->uploaderConfig($value, $extensions),
         ];
     }
 
-    private function deleteStoredFile(string $value): void
+    /**
+     * @param  list<string>         $extensions
+     * @return array<string, mixed>
+     */
+    protected function uploaderConfig(string $value, array $extensions): array
+    {
+        $config = $this->config();
+
+        return [
+            'urls' => [
+                'init' => route($config->routeName('init')),
+                'chunk' => route($config->routeName('chunk')),
+                'status' => route($config->routeName('status')),
+                'finalize' => route($config->routeName('finalize')),
+                'abort' => route($config->routeName('abort')),
+            ],
+            'csrfToken' => csrf_token(),
+            'storageKey' => $this->storageKey(),
+            'initialValue' => $value,
+            'profile' => $this->profile,
+            'extensions' => $extensions,
+            'chunkSize' => $this->getChunkSize(),
+            'maxFileSize' => $config->maxFileSize,
+            'concurrency' => $this->getConcurrency(),
+            'keepName' => $this->isKeepOriginalFileName(),
+            'labels' => [
+                'too_large' => (string) __('moonshine-chunk-upload::ui.too_large'),
+                'bad_extension' => (string) __('moonshine-chunk-upload::ui.bad_extension'),
+                'network_error' => (string) __('moonshine-chunk-upload::ui.network_error'),
+                'server_error' => (string) __('moonshine-chunk-upload::ui.server_error'),
+                'resumable' => (string) __('moonshine-chunk-upload::ui.resumable'),
+            ],
+        ];
+    }
+
+    protected function storageKey(): string
+    {
+        return 'moonshine-chunk-upload:'.sha1(request()->path().'|'.$this->getNameAttribute());
+    }
+
+    protected function deleteFile(string $value): void
     {
         if ($value === '' || ! $this->isDeleteFiles()) {
             return;
@@ -326,8 +371,20 @@ class ChunkUpload extends Field implements RemovableContract
         rescue(fn (): bool => $this->deleteStorageFile($value), report: false);
     }
 
-    private function manager(): ChunkUploadManager
+    protected function stringValue(): string
+    {
+        $value = $this->toValue();
+
+        return \is_string($value) ? $value : '';
+    }
+
+    protected function manager(): ChunkUploadManager
     {
         return resolve(ChunkUploadManager::class);
+    }
+
+    protected function config(): ChunkUploadConfig
+    {
+        return resolve(ChunkUploadConfig::class);
     }
 }

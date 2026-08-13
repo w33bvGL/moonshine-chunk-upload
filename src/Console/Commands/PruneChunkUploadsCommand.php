@@ -24,16 +24,15 @@ final class PruneChunkUploadsCommand extends Command
     {
         $dryRun = (bool) $this->option('dry-run');
 
-        $tmpHours   = $this->hours('tmp-hours');
-        $finalHours = $this->hours('final-hours');
+        $tmp   = $manager->pruneTmp($this->hours('tmp-hours'), $dryRun);
+        $final = $manager->pruneFinal($this->hours('final-hours'), $dryRun);
 
-        $prunedTmp   = $manager->pruneTmp($tmpHours, $dryRun);
-        $prunedFinal = $manager->pruneFinal($finalHours, $dryRun);
-
-        $this->info(
-            ($dryRun ? 'Would prune ' : 'Pruned ')
-            ."{$prunedTmp} stale tmp upload(s), {$prunedFinal} orphaned final file(s)."
-        );
+        $this->info(sprintf(
+            '%s %d stale tmp upload(s), %d orphaned final file(s).',
+            $dryRun ? 'Would prune' : 'Pruned',
+            $tmp,
+            $final,
+        ));
 
         return self::SUCCESS;
     }
@@ -42,6 +41,6 @@ final class PruneChunkUploadsCommand extends Command
     {
         $value = $this->option($option);
 
-        return $value === null || $value === '' ? null : (int) $value;
+        return is_numeric($value) ? max(0, (int) $value) : null;
     }
 }

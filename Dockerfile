@@ -18,8 +18,6 @@ RUN apk add --no-cache \
     && apk del $PHPIZE_DEPS \
     && rm -rf /var/cache/apk/*
 
-# Chunks arrive as raw request bodies, so the PHP limits have to clear the
-# largest chunk the sandbox offers.
 RUN printf "post_max_size=64M\nupload_max_filesize=64M\nmemory_limit=512M\n" \
     > /usr/local/etc/php/conf.d/chunk-upload.ini
 
@@ -27,7 +25,7 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/sandbox
 
-COPY docker/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint
+COPY .docker/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint
 RUN chmod +x /usr/local/bin/sandbox-entrypoint
 
 EXPOSE 8000

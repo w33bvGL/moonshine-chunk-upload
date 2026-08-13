@@ -1,35 +1,56 @@
 /*
- * Copyright Anidzen @w33bvgl
- *
- * Alpine component driving the chunked upload field.
- *
- * The file is sliced in the browser and pushed through a small pool of parallel
- * XHRs; each chunk retries on its own, so a dropped connection costs one chunk
- * rather than the whole upload. The upload id is mirrored into localStorage,
- * which is what makes an upload survive a page reload — File objects cannot be
- * persisted, so the user re-picks the same file and only the missing chunks go
- * back over the wire.
+ * Copyright @w33bvgl
  */
+
+const KB = 1024;
+const MB = KB * 1024;
+const GB = MB * 1024;
+
+const PENDING_TTL = 24 * 60 * 60 * 1000;
+const MAX_LOGS = 300;
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_DELAY = 1000;
+const PROGRESS_MIN_ELAPSED = 1;
+const BUSY_DATASET_KEY = 'chunkUploadBusy';
+
+const toInt = (value, fallback) => {
+    const parsed = Number.parseInt(value, 10);
+
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const humanBytes = (bytes) => {
+    if (bytes >= GB) return `${(bytes / GB).toFixed(2)} GB`;
+    if (bytes >= MB) return `${(bytes / MB).toFixed(1)} MB`;
+    if (bytes >= KB) return `${(bytes / KB).toFixed(0)} KB`;
+
+    return `${bytes} B`;
+};
+
+const extensionOf = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 document.addEventListener('alpine:init', () => {
     Alpine.data('chunkUploader', (config) => ({
         urls: config.urls,
-        profile: config.profile,
         csrfToken: config.csrfToken,
-        chunkSize: parseInt(config.chunkSize),
-        concurrency: parseInt(config.concurrency) || 4,
-        maxFileSize: parseInt(config.maxFileSize),
-        extensions: config.extensions || [],
-        keepName: !!config.keepName,
         storageKey: config.storageKey,
+        profile: config.profile,
         labels: config.labels || {},
+        extensions: config.extensions || [],
+        keepName: Boolean(config.keepName),
+        chunkSize: toInt(config.chunkSize, 8 * MB),
+        concurrency: toInt(config.concurrency, 4),
+        maxFileSize: toInt(config.maxFileSize, 0),
 
-        state: 'idle', // idle | resumable | uploading | assembly | success | error
+        state: 'idle',
         progress: 0,
         uploadedHuman: '',
         speedHuman: '',
-        filePath: config.initialValue || '',
-        fileName: config.initialValue ? config.initialValue.split('/').pop() : '',
         errorMessage: '',
+        filePath: config.initialValue || '',
+        fileName: (config.initialValue || '').split('/').pop(),
         canResume: false,
         isDragging: false,
         showLogs: false,
@@ -41,7 +62,9 @@ document.addEventListener('alpine:init', () => {
         chunkLoaded: {},
         startedAt: 0,
         aborted: false,
+        busy: false,
         pending: null,
+        nextLogId: 0,
 
         init() {
             if (this.filePath) {
@@ -54,16 +77,16 @@ document.addEventListener('alpine:init', () => {
             this.restore();
         },
 
-        // --- persistence -----------------------------------------------------
+        destroy() {
+            this.setBusy(false);
+        },
 
         restore() {
             const stored = this.readPending();
 
             if (!stored) return;
 
-            // The upload only deserves the resume prompt if the server still
-            // holds its parts; otherwise the leftover is just noise.
-            this.api(`${this.urls.status}?upload_id=${stored.uploadId}`)
+            this.api(this.statusUrl(stored.uploadId))
                 .then(() => {
                     this.pending = stored;
                     this.fileName = stored.name;
@@ -77,20 +100,21 @@ document.addEventListener('alpine:init', () => {
 
             try {
                 const raw = window.localStorage.getItem(this.storageKey);
+
                 if (!raw) return null;
 
                 const stored = JSON.parse(raw);
+
                 if (!stored || !stored.uploadId) return null;
 
-                // A day-old id is past the server's default tmp TTL anyway.
-                if (Date.now() - (stored.savedAt || 0) > 86400000) {
+                if (Date.now() - (stored.savedAt || 0) > PENDING_TTL) {
                     this.forgetPending();
 
                     return null;
                 }
 
                 return stored;
-            } catch (e) {
+            } catch {
                 return null;
             }
         },
@@ -106,8 +130,8 @@ document.addEventListener('alpine:init', () => {
                     chunkSize: this.chunkSize,
                     savedAt: Date.now(),
                 }));
-            } catch (e) {
-                // Private mode / quota — resuming across reloads is a bonus, not a requirement.
+            } catch {
+                this.storageKey = '';
             }
         },
 
@@ -118,46 +142,44 @@ document.addEventListener('alpine:init', () => {
 
             try {
                 window.localStorage.removeItem(this.storageKey);
-            } catch (e) {
-                //
+            } catch {
+                this.storageKey = '';
             }
         },
 
-        // --- helpers ---------------------------------------------------------
-
-        addLog(data) {
-            this.logs.unshift({ time: new Date().toLocaleTimeString(), ...data });
-            if (this.logs.length > 300) this.logs.pop();
+        discardPending() {
+            this.forgetPending();
+            this.fileName = '';
+            this.state = 'idle';
         },
 
-        human(bytes) {
-            if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
-            if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
-            if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
-
-            return bytes + ' B';
+        statusUrl(uploadId) {
+            return `${this.urls.status}?upload_id=${encodeURIComponent(uploadId)}`;
         },
 
         label(key, replacements = {}) {
-            let text = this.labels[key] || key;
+            return Object.entries(replacements).reduce(
+                (text, [token, replacement]) => text.replaceAll(`:${token}`, replacement),
+                this.labels[key] || key,
+            );
+        },
 
-            Object.keys(replacements).forEach((token) => {
-                text = text.replace(`:${token}`, replacements[token]);
-            });
+        addLog(entry) {
+            this.logs.unshift({ id: this.nextLogId++, time: new Date().toLocaleTimeString(), ...entry });
 
-            return text;
+            if (this.logs.length > MAX_LOGS) this.logs.pop();
         },
 
         async api(url, options = {}) {
             const response = await fetch(url, {
+                method: options.method || 'GET',
                 credentials: 'same-origin',
                 headers: {
-                    'Accept': 'application/json',
+                    Accept: 'application/json',
                     'X-Requested-With': 'XMLHttpRequest',
                     'X-CSRF-TOKEN': this.csrfToken,
                     ...(options.json ? { 'Content-Type': 'application/json' } : {}),
                 },
-                method: options.method || 'GET',
                 body: options.json ? JSON.stringify(options.json) : undefined,
             });
 
@@ -170,10 +192,8 @@ document.addEventListener('alpine:init', () => {
             return data;
         },
 
-        // --- upload flow -----------------------------------------------------
-
         async handleFileSelect(files) {
-            if (!files.length) return;
+            if (!files || !files.length) return;
 
             const file = files[0];
             const error = this.validate(file);
@@ -190,41 +210,47 @@ document.addEventListener('alpine:init', () => {
             this.fileName = file.name;
             this.uploadId = null;
 
-            // Re-picking the exact file of an interrupted upload continues it
-            // instead of paying for the bytes the server already holds.
-            if (this.pending && this.pending.name === file.name && this.pending.size === file.size) {
-                this.uploadId = this.pending.uploadId;
-                this.chunkSize = this.pending.chunkSize || this.chunkSize;
-                this.pending = null;
+            const resumed = await this.resumePending(file);
 
-                try {
-                    const status = await this.api(`${this.urls.status}?upload_id=${this.uploadId}`);
-
-                    return await this.startUpload(status.received || []);
-                } catch (e) {
-                    this.uploadId = null;
-                    this.forgetPending();
-                }
-            }
+            if (resumed) return;
 
             this.forgetPending();
 
             await this.startUpload([]);
         },
 
+        async resumePending(file) {
+            const pending = this.pending;
+
+            if (!pending || pending.name !== file.name || pending.size !== file.size) return false;
+
+            this.pending = null;
+            this.uploadId = pending.uploadId;
+            this.chunkSize = toInt(pending.chunkSize, this.chunkSize);
+
+            try {
+                const status = await this.api(this.statusUrl(this.uploadId));
+
+                await this.startUpload(status.received || []);
+
+                return true;
+            } catch {
+                this.uploadId = null;
+                this.forgetPending();
+
+                return false;
+            }
+        },
+
         validate(file) {
-            const extension = (file.name.split('.').pop() || '').toLowerCase();
+            const extension = extensionOf(file.name);
 
             if (this.extensions.length && !this.extensions.includes(extension)) {
                 return this.label('bad_extension', { extensions: this.extensions.join(', ') });
             }
 
-            if (this.maxFileSize && file.size > this.maxFileSize) {
-                return this.label('too_large', { max: this.human(this.maxFileSize) });
-            }
-
-            if (!file.size) {
-                return this.label('too_large', { max: this.human(this.maxFileSize) });
+            if (!file.size || (this.maxFileSize && file.size > this.maxFileSize)) {
+                return this.label('too_large', { max: humanBytes(this.maxFileSize) });
             }
 
             return null;
@@ -237,14 +263,16 @@ document.addEventListener('alpine:init', () => {
             this.aborted = false;
             this.progress = 0;
             this.speedHuman = '';
-            this.logs = this.uploadId ? this.logs : [];
+            this.chunkLoaded = {};
             this.totalChunks = Math.ceil(this.file.size / this.chunkSize);
             this.startedAt = performance.now();
-            this.toggleSubmitButton(true);
+            this.setBusy(true);
 
             try {
                 if (!this.uploadId) {
-                    const init = await this.api(this.urls.init, {
+                    this.logs = [];
+
+                    const started = await this.api(this.urls.init, {
                         method: 'POST',
                         json: {
                             filename: this.file.name,
@@ -256,21 +284,24 @@ document.addEventListener('alpine:init', () => {
                         },
                     });
 
-                    this.uploadId = init.upload_id;
-                    this.chunkLoaded = {};
-                    this.addLog({ info: `Start: ${this.fileName}`, resp: this.human(this.file.size) });
+                    this.uploadId = started.upload_id;
+                    this.addLog({ info: `Start: ${this.fileName}`, resp: humanBytes(this.file.size) });
                 }
 
                 this.rememberPending();
 
                 const received = new Set(alreadyReceived);
-                received.forEach((i) => { this.chunkLoaded[i] = this.chunkBytes(i); });
-                this.refreshProgress();
-
                 const queue = [];
-                for (let i = 1; i <= this.totalChunks; i++) {
-                    if (!received.has(i)) queue.push(i);
+
+                for (let index = 1; index <= this.totalChunks; index++) {
+                    if (received.has(index)) {
+                        this.chunkLoaded[index] = this.chunkBytes(index);
+                    } else {
+                        queue.push(index);
+                    }
                 }
+
+                this.refreshProgress();
 
                 await this.runPool(queue);
 
@@ -278,35 +309,31 @@ document.addEventListener('alpine:init', () => {
 
                 this.state = 'assembly';
 
-                const result = await this.api(this.urls.finalize, {
+                const finalized = await this.api(this.urls.finalize, {
                     method: 'POST',
                     json: { upload_id: this.uploadId },
                 });
 
-                this.filePath = result.path;
-                this.state = 'success';
+                this.filePath = finalized.path;
                 this.progress = 100;
-                this.addLog({ info: 'Done', resp: result.path });
+                this.state = 'success';
+                this.addLog({ info: 'Done', resp: finalized.path });
                 this.forgetPending();
-                this.toggleSubmitButton(false);
-            } catch (err) {
-                if (!this.aborted) this.handleError(err.message);
+                this.setBusy(false);
+            } catch (error) {
+                if (!this.aborted) this.handleError(error.message);
             }
         },
 
         chunkBytes(index) {
-            const start = (index - 1) * this.chunkSize;
-
-            return Math.min(this.chunkSize, this.file.size - start);
+            return Math.min(this.chunkSize, this.file.size - (index - 1) * this.chunkSize);
         },
 
-        async runPool(queue) {
-            const workers = Array.from(
-                { length: Math.min(this.concurrency, queue.length) },
-                () => this.worker(queue),
-            );
+        runPool(queue) {
+            const size = Math.max(1, Math.min(this.concurrency, queue.length));
+            const workers = Array.from({ length: size }, () => this.worker(queue));
 
-            await Promise.all(workers);
+            return Promise.all(workers);
         },
 
         async worker(queue) {
@@ -315,31 +342,35 @@ document.addEventListener('alpine:init', () => {
             }
         },
 
-        async sendChunkWithRetry(index, attempts = 3) {
-            for (let attempt = 1; attempt <= attempts; attempt++) {
+        async sendChunkWithRetry(index) {
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
                 if (this.aborted) return;
 
+                const startedAt = performance.now();
+
                 try {
-                    const startTime = performance.now();
                     await this.sendChunk(index);
+
                     this.addLog({
                         chunk: index,
                         total: this.totalChunks,
                         status: 'OK',
-                        resp: (performance.now() - startTime).toFixed(0) + 'ms',
+                        resp: `${(performance.now() - startedAt).toFixed(0)}ms`,
                     });
 
                     return;
-                } catch (err) {
+                } catch (error) {
+                    const isLastAttempt = attempt === MAX_ATTEMPTS;
+
                     this.addLog({
                         chunk: index,
-                        status: attempt < attempts ? 'RETRY' : 'ERROR',
-                        error: err.message,
+                        status: isLastAttempt ? 'ERROR' : 'RETRY',
+                        error: error.message,
                     });
 
-                    if (attempt === attempts) throw err;
+                    if (isLastAttempt) throw error;
 
-                    await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+                    await wait(RETRY_BASE_DELAY * 2 ** (attempt - 1));
                 }
             }
         },
@@ -349,10 +380,11 @@ document.addEventListener('alpine:init', () => {
                 const start = (index - 1) * this.chunkSize;
                 const blob = this.file.slice(start, Math.min(start + this.chunkSize, this.file.size));
 
-                const xhr = new XMLHttpRequest();
                 const url = new URL(this.urls.chunk, window.location.origin);
-                url.searchParams.append('upload_id', this.uploadId);
-                url.searchParams.append('index', index);
+                url.searchParams.set('upload_id', this.uploadId);
+                url.searchParams.set('index', index);
+
+                const xhr = new XMLHttpRequest();
 
                 xhr.open('POST', url.toString(), true);
                 xhr.setRequestHeader('Accept', 'application/json');
@@ -360,58 +392,78 @@ document.addEventListener('alpine:init', () => {
                 xhr.setRequestHeader('X-CSRF-TOKEN', this.csrfToken);
                 xhr.setRequestHeader('Content-Type', 'application/octet-stream');
 
-                xhr.upload.onprogress = (e) => {
-                    this.chunkLoaded[index] = e.loaded;
+                xhr.upload.onprogress = (event) => {
+                    this.chunkLoaded[index] = Math.min(event.loaded, blob.size);
                     this.refreshProgress();
                 };
 
                 xhr.onload = () => {
-                    let resp = {};
-                    try { resp = JSON.parse(xhr.responseText); } catch (e) { /* non-JSON error page */ }
+                    let payload = {};
+
+                    try {
+                        payload = JSON.parse(xhr.responseText);
+                    } catch {
+                        payload = {};
+                    }
 
                     if (xhr.status >= 200 && xhr.status < 300) {
                         this.chunkLoaded[index] = blob.size;
                         this.refreshProgress();
-                        resolve(resp);
-                    } else {
-                        reject(new Error(resp.error || this.label('server_error', { status: xhr.status })));
+                        resolve(payload);
+
+                        return;
                     }
+
+                    this.chunkLoaded[index] = 0;
+                    reject(new Error(payload.error || this.label('server_error', { status: xhr.status })));
                 };
 
-                xhr.onerror = () => reject(new Error(this.label('network_error')));
+                xhr.onerror = () => {
+                    this.chunkLoaded[index] = 0;
+                    reject(new Error(this.label('network_error')));
+                };
+
+                xhr.onabort = xhr.onerror;
+                xhr.ontimeout = xhr.onerror;
+
                 xhr.send(blob);
             });
         },
 
         refreshProgress() {
-            const loaded = Object.values(this.chunkLoaded).reduce((a, b) => a + b, 0);
+            if (!this.file) return;
+
+            const loaded = Object.values(this.chunkLoaded).reduce((total, bytes) => total + bytes, 0);
+            const elapsed = (performance.now() - this.startedAt) / 1000;
 
             this.progress = Math.min(100, Math.round((loaded / this.file.size) * 100));
-            this.uploadedHuman = `${this.human(loaded)} / ${this.human(this.file.size)}`;
+            this.uploadedHuman = `${humanBytes(loaded)} / ${humanBytes(this.file.size)}`;
 
-            const elapsed = (performance.now() - this.startedAt) / 1000;
-            if (elapsed > 1) this.speedHuman = this.human(loaded / elapsed) + '/s';
+            if (elapsed > PROGRESS_MIN_ELAPSED) {
+                this.speedHuman = `${humanBytes(Math.round(loaded / elapsed))}/s`;
+            }
         },
 
         async resume() {
             if (!this.file || !this.uploadId) return;
 
             try {
-                const status = await this.api(`${this.urls.status}?upload_id=${this.uploadId}`);
+                const status = await this.api(this.statusUrl(this.uploadId));
+
                 await this.startUpload(status.received || []);
-            } catch (err) {
-                // The server no longer holds this upload — start over from scratch.
+            } catch {
                 this.uploadId = null;
                 this.forgetPending();
+
                 await this.startUpload([]);
             }
         },
 
-        handleError(msg) {
+        handleError(message) {
             this.state = 'error';
-            this.errorMessage = msg;
-            this.canResume = !!(this.file && this.uploadId);
-            this.toggleSubmitButton(false);
+            this.errorMessage = message;
+            this.canResume = Boolean(this.file && this.uploadId);
+            this.setBusy(false);
         },
 
         pickFile() {
@@ -419,11 +471,12 @@ document.addEventListener('alpine:init', () => {
             this.$refs.fileInput.click();
         },
 
-        async reset() {
+        reset() {
             this.aborted = true;
 
             if (this.uploadId) {
-                this.api(`${this.urls.abort}?upload_id=${this.uploadId}`, { method: 'DELETE' }).catch(() => {});
+                this.api(`${this.urls.abort}?upload_id=${encodeURIComponent(this.uploadId)}`, { method: 'DELETE' })
+                    .catch(() => {});
             }
 
             this.forgetPending();
@@ -441,12 +494,24 @@ document.addEventListener('alpine:init', () => {
             this.totalChunks = 0;
             this.chunkLoaded = {};
             this.logs = [];
-            this.toggleSubmitButton(false);
+            this.setBusy(false);
         },
 
-        toggleSubmitButton(disabled) {
-            const btn = this.$el.closest('form')?.querySelector('button[type="submit"]');
-            if (btn) btn.disabled = disabled;
+        setBusy(busy) {
+            if (this.busy === busy) return;
+
+            this.busy = busy;
+
+            const form = this.$el.closest('form');
+
+            if (!form) return;
+
+            const pending = Math.max(0, Number(form.dataset[BUSY_DATASET_KEY] || 0) + (busy ? 1 : -1));
+
+            form.dataset[BUSY_DATASET_KEY] = String(pending);
+            form.querySelectorAll('button[type="submit"]').forEach((button) => {
+                button.disabled = pending > 0;
+            });
         },
     }));
 });

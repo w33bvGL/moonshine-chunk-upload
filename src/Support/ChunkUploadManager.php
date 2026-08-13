@@ -9,18 +9,29 @@ declare(strict_types=1);
 namespace W33bvgl\MoonShineChunkUpload\Support;
 
 use Closure;
+use Generator;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use League\Flysystem\Local\LocalFilesystemAdapter;
+use Throwable;
 use W33bvgl\MoonShineChunkUpload\Events\ChunkUploadCompleted;
 use W33bvgl\MoonShineChunkUpload\Exceptions\ChunkUploadException;
 
 final readonly class ChunkUploadManager
 {
-    private const int COPY_BUFFER = 1048576;
+    private const int COPY_BUFFER_BYTES = 1_048_576;
+
+    private const int NAME_LENGTH_LIMIT = 100;
+
+    private const string PART_SUFFIX = '.part';
+
+    private const string ASSEMBLING_SUFFIX = '.assembling';
+
+    private const string META_FILE = 'meta.json';
 
     public function __construct(private ChunkUploadConfig $config) {}
 
@@ -29,10 +40,17 @@ final readonly class ChunkUploadManager
         return $this->config;
     }
 
-    /**
-     * Registers an upload and returns its id. Everything the later requests are
-     * validated against (size, chunk plan, extension) is frozen here.
-     */
+    public function disk(): FilesystemAdapter
+    {
+        $disk = Storage::disk($this->config->disk);
+
+        if (! $disk instanceof FilesystemAdapter || ! $disk->getAdapter() instanceof LocalFilesystemAdapter) {
+            throw ChunkUploadException::unsupportedDisk($this->config->disk);
+        }
+
+        return $disk;
+    }
+
     public function start(
         string $filename,
         int $size,
@@ -41,15 +59,13 @@ final readonly class ChunkUploadManager
         string $profile,
         bool $keepOriginalName = false,
     ): string {
-        $this->assertLocalDisk();
-
         $extensions = $this->config->extensionsFor($profile);
 
         if ($extensions === []) {
             throw ChunkUploadException::unknownProfile($profile);
         }
 
-        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        $extension = mb_strtolower(pathinfo($filename, PATHINFO_EXTENSION));
 
         if (! \in_array($extension, $extensions, true)) {
             throw ChunkUploadException::unsupportedExtension($extension);
@@ -80,53 +96,47 @@ final readonly class ChunkUploadManager
             createdAt: Date::now()->toIso8601String(),
         );
 
-        $this->disk()->makeDirectory($this->config->tmpDirFor($uploadId));
-
-        $this->disk()->put(
-            $this->config->tmpDirFor($uploadId).'/meta.json',
-            json_encode($meta->toArray(), JSON_THROW_ON_ERROR),
+        $stored = $this->disk()->put(
+            $this->metaPath($uploadId),
+            json_encode($meta, JSON_THROW_ON_ERROR),
         );
+
+        if ($stored === false) {
+            throw ChunkUploadException::assemblyFailed('the upload could not be registered');
+        }
 
         return $uploadId;
     }
 
     /**
-     * Stores a single chunk, streaming it to disk instead of buffering the whole
-     * body, and returns the number of bytes written.
-     *
      * @param resource|string $content
      */
     public function receiveChunk(string $uploadId, int $index, mixed $content): int
     {
-        $meta = $this->meta($uploadId);
-
-        if (! $meta instanceof UploadMeta) {
-            throw ChunkUploadException::notFound();
-        }
+        $meta = $this->meta($uploadId) ?? throw ChunkUploadException::notFound();
 
         if ($index < 1 || $index > $meta->total) {
             throw ChunkUploadException::chunkOutOfRange($index);
         }
 
         $expected = $meta->expectedChunkBytes($index);
+        $part     = $this->disk()->path($this->partPath($uploadId, $index));
+        $staged   = $part.'.'.bin2hex(random_bytes(8)).'.tmp';
 
-        $partAbsolute = $this->disk()->path($this->config->tmpDirFor($uploadId)."/{$index}.part");
-        $tmpAbsolute  = $partAbsolute.'.'.getmypid().'.tmp';
+        try {
+            $written = $this->writeCapped($content, $staged, $expected);
 
-        $written = $this->writeCapped($content, $tmpAbsolute, $expected);
+            if ($written !== $expected) {
+                throw ChunkUploadException::invalidChunkSize($index);
+            }
 
-        if ($written !== $expected) {
-            File::delete($tmpAbsolute);
+            if (! @rename($staged, $part)) {
+                throw ChunkUploadException::assemblyFailed("chunk {$index} could not be stored");
+            }
+        } catch (Throwable $e) {
+            File::delete($staged);
 
-            throw ChunkUploadException::invalidChunkSize($index);
-        }
-
-        // Atomic on the same filesystem: a parallel retry of the same index
-        // either wins or loses the rename, never produces a torn part file.
-        if (! @rename($tmpAbsolute, $partAbsolute)) {
-            File::delete($tmpAbsolute);
-
-            throw ChunkUploadException::assemblyFailed("chunk {$index} could not be stored");
+            throw $e;
         }
 
         return $written;
@@ -137,10 +147,11 @@ final readonly class ChunkUploadManager
      */
     public function receivedIndexes(string $uploadId): array
     {
+        $pattern = '#(?:^|/)(\d+)'.preg_quote(self::PART_SUFFIX, '#').'$#';
         $indexes = [];
 
         foreach ($this->disk()->files($this->config->tmpDirFor($uploadId)) as $file) {
-            if (preg_match('#/(\d+)\.part$#', $file, $matches) === 1) {
+            if (preg_match($pattern, $file, $matches) === 1) {
                 $indexes[] = (int) $matches[1];
             }
         }
@@ -150,17 +161,9 @@ final readonly class ChunkUploadManager
         return $indexes;
     }
 
-    /**
-     * Concatenates the parts into the final file and returns its path, relative
-     * to the upload disk.
-     */
     public function finalize(string $uploadId): string
     {
-        $meta = $this->meta($uploadId);
-
-        if (! $meta instanceof UploadMeta) {
-            throw ChunkUploadException::notFound();
-        }
+        $meta = $this->meta($uploadId) ?? throw ChunkUploadException::notFound();
 
         $missing = array_values(array_diff(range(1, $meta->total), $this->receivedIndexes($uploadId)));
 
@@ -168,67 +171,26 @@ final readonly class ChunkUploadManager
             throw ChunkUploadException::incompleteUpload($missing);
         }
 
-        $claimedDir = $this->config->tmpDirFor($uploadId).'.assembling';
+        $assembling = $this->config->tmpDirFor($uploadId).self::ASSEMBLING_SUFFIX;
 
         if (! @rename(
             $this->disk()->path($this->config->tmpDirFor($uploadId)),
-            $this->disk()->path($claimedDir),
+            $this->disk()->path($assembling),
         )) {
             throw ChunkUploadException::alreadyAssembling();
         }
 
-        $relative = $this->config->finalDir.'/'.$this->finalName($uploadId, $meta);
-        $absolute = $this->disk()->path($relative);
-
-        File::ensureDirectoryExists(\dirname($absolute));
-
-        $out = fopen($absolute, 'wb');
-
-        if ($out === false) {
-            $this->disk()->deleteDirectory($claimedDir);
-
-            throw ChunkUploadException::assemblyFailed('the destination file could not be created');
-        }
-
         try {
-            for ($index = 1; $index <= $meta->total; $index++) {
-                $in = fopen($this->disk()->path("{$claimedDir}/{$index}.part"), 'rb');
-
-                if ($in === false) {
-                    throw ChunkUploadException::assemblyFailed("chunk {$index} could not be read");
-                }
-
-                stream_copy_to_stream($in, $out);
-                fclose($in);
-            }
-        } catch (ChunkUploadException $e) {
-            fclose($out);
-            File::delete($absolute);
-            $this->disk()->deleteDirectory($claimedDir);
-
-            throw $e;
+            $path = $this->assemble($assembling, $uploadId, $meta);
+        } finally {
+            $this->disk()->deleteDirectory($assembling);
         }
 
-        fclose($out);
+        event(new ChunkUploadCompleted($uploadId, $path, $meta));
 
-        $this->disk()->deleteDirectory($claimedDir);
-
-        if ((int) filesize($absolute) !== $meta->size) {
-            File::delete($absolute);
-
-            throw ChunkUploadException::sizeMismatch();
-        }
-
-        event(new ChunkUploadCompleted($uploadId, $relative, $meta));
-
-        return $relative;
+        return $path;
     }
 
-    /**
-     * Drops an upload's parts. A directory already claimed by finalize is left
-     * alone — pulling it out from under an in-flight assembly would corrupt the
-     * result; the prune command sweeps those up instead.
-     */
     public function abort(string $uploadId): void
     {
         $this->disk()->deleteDirectory($this->config->tmpDirFor($uploadId));
@@ -236,24 +198,17 @@ final readonly class ChunkUploadManager
 
     public function meta(string $uploadId): ?UploadMeta
     {
-        $raw = rescue(
-            fn (): ?string => $this->disk()->get($this->config->tmpDirFor($uploadId).'/meta.json'),
-            report: false,
-        );
+        $raw = rescue(fn (): ?string => $this->disk()->get($this->metaPath($uploadId)), report: false);
 
         if (! \is_string($raw)) {
             return null;
         }
 
-        $decoded = json_decode($raw, true);
+        $decoded = json_decode($raw, true, flags: JSON_INVALID_UTF8_SUBSTITUTE);
 
         return \is_array($decoded) ? UploadMeta::fromArray($decoded) : null;
     }
 
-    /**
-     * True only for paths this package itself produced, so a tampered form value
-     * can never point the field at an arbitrary file.
-     */
     public function isFinalizedPath(string $path): bool
     {
         $prefix = $this->config->finalDir.'/';
@@ -262,17 +217,10 @@ final readonly class ChunkUploadManager
             return false;
         }
 
-        $name = substr($path, \strlen($prefix));
-
-        return preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]*$/', $name) === 1
-            && ! str_contains($name, '..');
+        return preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]*$/', substr($path, \strlen($prefix))) === 1;
     }
 
     /**
-     * Moves a finalized file out of the staging directory onto the disk the
-     * field owns, and returns the stored path (or null when the value is not a
-     * finalized upload, or has already been claimed).
-     *
      * @param null|Closure(string): string $rename
      */
     public function claim(string $path, string $toDisk, string $toDir = '', ?Closure $rename = null): ?string
@@ -292,9 +240,7 @@ final readonly class ChunkUploadManager
         $relative = $this->uniquePath($target, ($dir === '' ? '' : $dir.'/').$name);
 
         if ($toDisk === $this->config->disk) {
-            $this->disk()->move($path, $relative);
-
-            return $relative;
+            return $this->disk()->move($path, $relative) ? $relative : null;
         }
 
         $stream = $this->disk()->readStream($path);
@@ -303,54 +249,63 @@ final readonly class ChunkUploadManager
             return null;
         }
 
-        $target->writeStream($relative, $stream);
-        fclose($stream);
+        try {
+            $stored = $target->writeStream($relative, $stream);
+        } finally {
+            fclose($stream);
+        }
+
+        if ($stored === false) {
+            return null;
+        }
+
         $this->disk()->delete($path);
 
         return $relative;
     }
 
-    /**
-     * Deletes tmp directories of uploads that were never finalized.
-     */
     public function pruneTmp(?int $hours = null, bool $dryRun = false): int
     {
-        $threshold = Date::now()->subHours($hours ?? $this->config->tmpTtlHours);
-        $pruned    = 0;
-
-        foreach ($this->disk()->directories($this->config->tmpDir) as $directory) {
-            $modifiedAt = Date::createFromTimestamp(File::lastModified($this->disk()->path($directory)));
-
-            if ($modifiedAt->isAfter($threshold)) {
-                continue;
-            }
-
-            if (! $dryRun) {
-                $this->disk()->deleteDirectory($directory);
-            }
-
-            $pruned++;
-        }
-
-        return $pruned;
+        return $this->prune(
+            $this->disk()->directories($this->config->tmpDir),
+            $hours ?? $this->config->tmpTtlHours,
+            $dryRun,
+            fn (string $directory): bool => $this->disk()->deleteDirectory($directory),
+        );
     }
 
-    /**
-     * Deletes assembled files that no field ever claimed — an upload that
-     * finished but whose form was never submitted.
-     */
     public function pruneFinal(?int $hours = null, bool $dryRun = false): int
     {
-        $threshold = Date::now()->subHours($hours ?? $this->config->finalTtlHours);
+        return $this->prune(
+            $this->disk()->files($this->config->finalDir),
+            $hours ?? $this->config->finalTtlHours,
+            $dryRun,
+            fn (string $file): bool => $this->disk()->delete($file),
+        );
+    }
+
+    /**
+     * @param iterable<array-key, string> $paths
+     * @param Closure(string): bool       $delete
+     */
+    private function prune(iterable $paths, int $hours, bool $dryRun, Closure $delete): int
+    {
+        $threshold = Date::now()->subHours(max(0, $hours));
         $pruned    = 0;
 
-        foreach ($this->disk()->files($this->config->finalDir) as $file) {
-            if (Date::createFromTimestamp($this->disk()->lastModified($file))->isAfter($threshold)) {
+        foreach ($paths as $path) {
+            $modifiedAt = @filemtime($this->disk()->path($path));
+
+            if ($modifiedAt === false) {
+                continue;
+            }
+
+            if (Date::createFromTimestamp($modifiedAt)->isAfter($threshold)) {
                 continue;
             }
 
             if (! $dryRun) {
-                $this->disk()->delete($file);
+                $delete($path);
             }
 
             $pruned++;
@@ -359,114 +314,178 @@ final readonly class ChunkUploadManager
         return $pruned;
     }
 
-    public function disk(): FilesystemAdapter
+    private function assemble(string $directory, string $uploadId, UploadMeta $meta): string
     {
-        /** @var FilesystemAdapter */
-        return Storage::disk($this->config->disk);
-    }
+        [$path, $out] = $this->createFinalFile($uploadId, $meta);
 
-    private function assertLocalDisk(): void
-    {
-        if (! $this->disk()->getAdapter() instanceof LocalFilesystemAdapter) {
-            throw ChunkUploadException::unsupportedDisk($this->config->disk);
+        try {
+            $written = 0;
+
+            for ($index = 1; $index <= $meta->total; $index++) {
+                $in = @fopen($this->disk()->path("{$directory}/{$index}".self::PART_SUFFIX), 'rb');
+
+                if ($in === false) {
+                    throw ChunkUploadException::assemblyFailed("chunk {$index} could not be read");
+                }
+
+                try {
+                    $copied = stream_copy_to_stream($in, $out);
+                } finally {
+                    fclose($in);
+                }
+
+                if ($copied !== $meta->expectedChunkBytes($index)) {
+                    throw ChunkUploadException::assemblyFailed("chunk {$index} could not be copied in full");
+                }
+
+                $written += $copied;
+            }
+
+            if ($written !== $meta->size) {
+                throw ChunkUploadException::sizeMismatch();
+            }
+        } catch (Throwable $e) {
+            fclose($out);
+            $this->disk()->delete($path);
+
+            throw $e;
         }
-    }
 
-    private function finalName(string $uploadId, UploadMeta $meta): string
-    {
-        if (! $meta->keepOriginalName) {
-            return "{$uploadId}.{$meta->extension}";
-        }
+        fclose($out);
 
-        $name = $this->sanitizeName($meta->filename, $meta->extension);
-
-        if ($this->disk()->exists($this->config->finalDir.'/'.$name)) {
-            $stem = pathinfo($name, PATHINFO_FILENAME);
-            $name = $stem.'-'.substr($uploadId, 0, 8).'.'.$meta->extension;
-        }
-
-        return $name;
+        return $path;
     }
 
     /**
-     * Reduces any name to a single safe path segment carrying the given
-     * extension — no directory separators, no leading dots, no surprises.
+     * @return array{0: string, 1: resource}
      */
+    private function createFinalFile(string $uploadId, UploadMeta $meta): array
+    {
+        foreach ($this->finalNameCandidates($uploadId, $meta) as $name) {
+            $path     = $this->config->finalPathFor($name);
+            $absolute = $this->disk()->path($path);
+
+            File::ensureDirectoryExists(\dirname($absolute));
+
+            $handle = @fopen($absolute, 'xb');
+
+            if ($handle !== false) {
+                return [$path, $handle];
+            }
+        }
+
+        throw ChunkUploadException::assemblyFailed('the destination file could not be created');
+    }
+
+    /**
+     * @return Generator<int, string>
+     */
+    private function finalNameCandidates(string $uploadId, UploadMeta $meta): Generator
+    {
+        if (! $meta->keepOriginalName) {
+            yield "{$uploadId}.{$meta->extension}";
+        } else {
+            $name = $this->sanitizeName($meta->filename, $meta->extension);
+            $stem = pathinfo($name, PATHINFO_FILENAME);
+
+            yield $name;
+
+            yield "{$stem}-".mb_substr($uploadId, 0, 8).".{$meta->extension}";
+        }
+
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            yield "{$uploadId}-".Str::lower(Str::random(8)).".{$meta->extension}";
+        }
+    }
+
     private function sanitizeName(string $name, string $extension): string
     {
         $stem = (string) preg_replace('/[^A-Za-z0-9._-]+/', '-', pathinfo(basename($name), PATHINFO_FILENAME));
         $stem = trim($stem, '.-');
 
-        if ($stem === '') {
-            $stem = 'file';
-        }
-
-        return Str::limit($stem, 100, '').'.'.strtolower($extension);
+        return Str::limit($stem === '' ? 'file' : $stem, self::NAME_LENGTH_LIMIT, '').'.'.mb_strtolower($extension);
     }
 
-    private function uniquePath(FilesystemAdapter $disk, string $relative): string
+    private function uniquePath(Filesystem $disk, string $relative): string
     {
         if (! $disk->exists($relative)) {
             return $relative;
         }
 
-        $dir       = \dirname($relative);
-        $dir       = $dir === '.' ? '' : $dir.'/';
+        $directory = \dirname($relative);
+        $directory = $directory === '.' ? '' : $directory.'/';
         $extension = pathinfo($relative, PATHINFO_EXTENSION);
         $stem      = pathinfo($relative, PATHINFO_FILENAME);
 
-        return $dir.$stem.'-'.Str::lower(Str::random(6)).($extension === '' ? '' : '.'.$extension);
+        return $directory.$stem.'-'.Str::lower(Str::random(6)).($extension === '' ? '' : '.'.$extension);
     }
 
     /**
-     * Writes at most `$limit` bytes and reports how many arrived: one byte over
-     * the limit is enough for the caller to reject the chunk, so an oversized
-     * body never lands on disk in full.
-     *
      * @param resource|string $content
      */
     private function writeCapped(mixed $content, string $path, int $limit): int
     {
         File::ensureDirectoryExists(\dirname($path));
 
-        $out = fopen($path, 'wb');
+        $out = @fopen($path, 'wb');
 
         if ($out === false) {
             throw ChunkUploadException::assemblyFailed('the chunk file could not be created');
         }
 
-        $written = 0;
-
         try {
-            if (\is_resource($content)) {
-                while (! feof($content)) {
-                    $buffer = fread($content, self::COPY_BUFFER);
+            if (! \is_resource($content)) {
+                $body    = (string) $content;
+                $written = \strlen($body);
 
-                    if ($buffer === false || $buffer === '') {
-                        break;
-                    }
-
-                    $written += \strlen($buffer);
-
-                    if ($written > $limit) {
-                        return $written;
-                    }
-
-                    fwrite($out, $buffer);
+                if ($written <= $limit) {
+                    $this->write($out, $body);
                 }
 
                 return $written;
             }
 
-            $written = \strlen((string) $content);
+            $written = 0;
 
-            if ($written <= $limit) {
-                fwrite($out, (string) $content);
+            while (! feof($content)) {
+                $buffer = fread($content, self::COPY_BUFFER_BYTES);
+
+                if ($buffer === false || $buffer === '') {
+                    break;
+                }
+
+                $written += \strlen($buffer);
+
+                if ($written > $limit) {
+                    return $written;
+                }
+
+                $this->write($out, $buffer);
             }
 
             return $written;
         } finally {
             fclose($out);
         }
+    }
+
+    /**
+     * @param resource $handle
+     */
+    private function write(mixed $handle, string $buffer): void
+    {
+        if (fwrite($handle, $buffer) !== \strlen($buffer)) {
+            throw ChunkUploadException::assemblyFailed('the chunk could not be written to disk');
+        }
+    }
+
+    private function metaPath(string $uploadId): string
+    {
+        return $this->config->tmpDirFor($uploadId).'/'.self::META_FILE;
+    }
+
+    private function partPath(string $uploadId, int $index): string
+    {
+        return $this->config->tmpDirFor($uploadId)."/{$index}".self::PART_SUFFIX;
     }
 }

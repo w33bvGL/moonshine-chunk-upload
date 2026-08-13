@@ -15,17 +15,15 @@ sync_demo() {
              "$SANDBOX_DIR/app/MoonShine/Layouts" \
              "$SANDBOX_DIR/app/Http/Middleware"
 
-    cp "$PACKAGE_DIR/docker/demo/ChunkUploadPlaygroundPage.php" \
+    cp "$PACKAGE_DIR/.docker/demo/ChunkUploadPlaygroundPage.php" \
         "$SANDBOX_DIR/app/MoonShine/Pages/ChunkUploadPlaygroundPage.php"
-    cp "$PACKAGE_DIR/docker/demo/PlaygroundLayout.php" \
+    cp "$PACKAGE_DIR/.docker/demo/PlaygroundLayout.php" \
         "$SANDBOX_DIR/app/MoonShine/Layouts/PlaygroundLayout.php"
-    cp "$PACKAGE_DIR/docker/demo/AutoLoginMiddleware.php" \
+    cp "$PACKAGE_DIR/.docker/demo/AutoLoginMiddleware.php" \
         "$SANDBOX_DIR/app/Http/Middleware/AutoLoginMiddleware.php"
-    cp "$PACKAGE_DIR/docker/demo/playground-routes.php" \
+    cp "$PACKAGE_DIR/.docker/demo/playground-routes.php" \
         "$SANDBOX_DIR/routes/playground.php"
 
-    # The playground page takes over the dashboard, and auto-login replaces the
-    # login screen — the sandbox exists to click through uploads, not sessions.
     sed -i \
         -e "s/'enabled' => false,/'enabled' => true,/" \
         -e "s/'dashboard' => Dashboard::class,/'dashboard' => \\\\App\\\\MoonShine\\\\Pages\\\\ChunkUploadPlaygroundPage::class,/" \

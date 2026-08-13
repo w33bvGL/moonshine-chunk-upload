@@ -1,50 +1,17 @@
 @props([
-    'element' => null,
     'inputName' => '',
-    'inputValue' => '',
-    'urls' => [],
-    'csrfToken' => '',
-    'profile' => 'video',
-    'extensions' => [],
+    'uploader' => [],
     'accept' => '*',
     'color' => 'primary',
-    'chunkSize' => 8388608,
-    'maxFileSize' => null,
-    'concurrency' => 4,
-    'keepName' => false,
-    'size' => 'md',
-    'debug' => false,
+    'icon' => 'c.cloud-arrow-up',
+    'title' => '',
+    'btnText' => '',
+    'isDebug' => false,
     'isRemovable' => false,
     'previewUrl' => null,
-    'title' => '',
-    'icon' => 'c.cloud-arrow-up',
-    'btnText' => '',
 ])
 
-@php
-    $labels = [
-        'too_large' => __('moonshine-chunk-upload::ui.too_large'),
-        'bad_extension' => __('moonshine-chunk-upload::ui.bad_extension'),
-        'network_error' => __('moonshine-chunk-upload::ui.network_error'),
-        'server_error' => __('moonshine-chunk-upload::ui.server_error'),
-    ];
-
-    $jsConfig = [
-        'urls' => $urls,
-        'csrfToken' => $csrfToken,
-        'profile' => $profile,
-        'initialValue' => (string) $inputValue,
-        'chunkSize' => $chunkSize,
-        'maxFileSize' => $maxFileSize,
-        'concurrency' => $concurrency,
-        'keepName' => $keepName,
-        'extensions' => $extensions,
-        'storageKey' => 'moonshine-chunk-upload:' . sha1(request()->path() . '|' . $inputName),
-        'labels' => $labels,
-    ];
-@endphp
-
-<div x-data="chunkUploader(@js($jsConfig))" class="space-y-4">
+<div x-data="chunkUploader(@js($uploader))" class="space-y-4">
 
     <x-moonshine::card class="w-full overflow-hidden">
         <input type="hidden" name="{{ $inputName }}" x-model="filePath">
@@ -62,7 +29,6 @@
             x-on:dragleave.prevent="isDragging = false"
             x-on:drop.prevent="isDragging = false; handleFileSelect($event.dataTransfer.files)"
         >
-            {{-- IDLE --}}
             <div x-show="state === 'idle'" class="text-center animate-fade-in" x-transition>
                 <x-moonshine::layout.grid>
                     <x-moonshine::layout.column colSpan="12">
@@ -84,22 +50,20 @@
                 </x-moonshine::layout.grid>
             </div>
 
-            {{-- RESUMABLE: an upload interrupted before the page was reloaded --}}
             <div x-show="state === 'resumable'" class="text-center animate-fade-in" style="display: none;" x-transition>
                 <x-moonshine::icon icon="c.arrow-path" size="12" class="text-{{ $color }} mb-2" />
                 <h3 class="text-lg font-bold mb-2">{{ $title }}</h3>
-                <p class="text-xs text-gray-500 mb-6" x-text="@js(__('moonshine-chunk-upload::ui.resumable')).replace(':name', fileName)"></p>
+                <p class="text-xs text-gray-500 mb-6" x-text="label('resumable', { name: fileName })"></p>
                 <div class="flex items-center justify-center gap-3">
                     <x-moonshine::link-button :color="$color" size="sm" x-on:click.prevent="pickFile()">
                         {{ __('moonshine-chunk-upload::ui.resume') }}
                     </x-moonshine::link-button>
-                    <x-moonshine::link-button color="gray" size="sm" outline x-on:click.prevent="forgetPending(); state = 'idle'; fileName = ''">
+                    <x-moonshine::link-button color="gray" size="sm" outline x-on:click.prevent="discardPending()">
                         {{ __('moonshine-chunk-upload::ui.start_over') }}
                     </x-moonshine::link-button>
                 </div>
             </div>
 
-            {{-- UPLOADING / ASSEMBLY --}}
             <div x-show="state === 'uploading' || state === 'assembly'" class="w-full max-w-md text-center" style="display: none;" x-transition>
                 <div class="mb-6 relative inline-block">
                     <template x-if="state === 'uploading'">
@@ -120,14 +84,13 @@
                         <span class="text-gray-400" x-text="uploadedHuman"></span>
                         <span class="text-{{ $color }}" x-text="state === 'assembly' ? @js(__('moonshine-chunk-upload::ui.finalizing')) : speedHuman"></span>
                     </div>
-                    <div class="progress progress-{{ $size }} bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div class="progress progress-md bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                         <div class="progress-bar progress-bar--{{ $color }} h-full transition-all duration-300" x-bind:style="'width: ' + progress + '%'"></div>
                     </div>
                 </div>
                 <p class="mt-4 text-[10px] text-gray-400 truncate" x-text="fileName"></p>
             </div>
 
-            {{-- SUCCESS --}}
             <div x-show="state === 'success'" class="text-center animate-fade-in" style="display: none;" x-transition>
                 <x-moonshine::icon icon="c.check-circle" size="12" class="text-green-500 mb-2" />
                 <h3 class="text-xl font-bold text-green-600 mb-2">{{ __('moonshine-chunk-upload::ui.success') }}</h3>
@@ -138,29 +101,28 @@
                             <x-moonshine::icon icon="c.eye"/>
                         </x-moonshine::link-button>
                     @endif
-                    <x-moonshine::link-button color="gray" size="sm" x-on:click.prevent="reset" outline>
+                    <x-moonshine::link-button color="gray" size="sm" x-on:click.prevent="reset()" outline>
                         {{ __('moonshine-chunk-upload::ui.replace') }}
                     </x-moonshine::link-button>
                     @if($isRemovable)
-                        <x-moonshine::link-button color="error" size="sm" x-on:click.prevent="reset" outline>
+                        <x-moonshine::link-button color="error" size="sm" x-on:click.prevent="reset()" outline>
                             {{ __('moonshine-chunk-upload::ui.remove') }}
                         </x-moonshine::link-button>
                     @endif
                 </div>
             </div>
 
-            {{-- ERROR --}}
             <div x-show="state === 'error'" class="text-center animate-fade-in" style="display: none;" x-transition>
                 <x-moonshine::icon icon="c.x-circle" size="12" class="text-red-500 mb-2" />
                 <h3 class="text-xl font-bold text-red-600 mb-2">{{ __('moonshine-chunk-upload::ui.error') }}</h3>
                 <p class="text-xs text-red-500 mb-6 font-bold" x-text="errorMessage"></p>
                 <div class="flex items-center justify-center gap-3">
                     <template x-if="canResume">
-                        <x-moonshine::link-button :color="$color" size="sm" x-on:click.prevent="resume">
+                        <x-moonshine::link-button :color="$color" size="sm" x-on:click.prevent="resume()">
                             {{ __('moonshine-chunk-upload::ui.resume') }}
                         </x-moonshine::link-button>
                     </template>
-                    <x-moonshine::link-button color="error" size="sm" x-on:click.prevent="reset">
+                    <x-moonshine::link-button color="error" size="sm" x-on:click.prevent="reset()">
                         {{ __('moonshine-chunk-upload::ui.start_over') }}
                     </x-moonshine::link-button>
                 </div>
@@ -168,7 +130,7 @@
         </div>
     </x-moonshine::card>
 
-    @if($debug)
+    @if($isDebug)
         <div class="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-sm">
             <button type="button" x-on:click="showLogs = !showLogs" class="w-full flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800">
                 <span class="text-xs font-bold uppercase tracking-widest text-gray-600">{{ __('moonshine-chunk-upload::ui.debug') }}</span>
@@ -187,7 +149,7 @@
                     </tr>
                     </thead>
                     <tbody>
-                    <template x-for="(log, i) in logs" :key="i">
+                    <template x-for="log in logs" :key="log.id">
                         <tr class="border-b border-gray-900 hover:bg-white/5">
                             <td class="p-2 text-gray-500" x-text="log.time"></td>
                             <td class="p-2" x-text="log.chunk ? 'Chunk #' + log.chunk : log.info"></td>

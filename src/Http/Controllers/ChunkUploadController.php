@@ -14,20 +14,7 @@ use Illuminate\Routing\Controller;
 use Illuminate\Support\Str;
 use W33bvgl\MoonShineChunkUpload\Exceptions\ChunkUploadException;
 use W33bvgl\MoonShineChunkUpload\Support\ChunkUploadManager;
-use W33bvgl\MoonShineChunkUpload\Support\UploadMeta;
 
-/**
- * The HTTP surface of the upload protocol:
- *
- *   POST   init     {filename, size, total, chunk_size, profile}  -> {upload_id}
- *   POST   chunk    ?upload_id&index  (raw body)                  -> {received}
- *   GET    status   ?upload_id                                    -> {received: [...], total}
- *   POST   finalize {upload_id}                                   -> {path}
- *   DELETE abort    ?upload_id                                    -> {status}
- *
- * Everything past `init` is validated against the frozen `meta.json`, so the
- * only thing a later request may carry is an upload id.
- */
 final class ChunkUploadController extends Controller
 {
     public function __construct(private readonly ChunkUploadManager $manager) {}
@@ -45,7 +32,7 @@ final class ChunkUploadController extends Controller
             'keep_name' => ['sometimes', 'boolean'],
         ]);
 
-        return $this->guard(fn (): JsonResponse => response()->json([
+        return response()->json([
             'upload_id' => $this->manager->start(
                 filename: (string) $validated['filename'],
                 size: (int) $validated['size'],
@@ -54,7 +41,7 @@ final class ChunkUploadController extends Controller
                 profile: (string) $validated['profile'],
                 keepOriginalName: (bool) ($validated['keep_name'] ?? false),
             ),
-        ]));
+        ]);
     }
 
     public function chunk(Request $request): JsonResponse
@@ -62,29 +49,19 @@ final class ChunkUploadController extends Controller
         $uploadId = $this->uploadId($request);
         $index    = $request->integer('index');
 
-        if ($uploadId === null) {
-            return $this->error(ChunkUploadException::notFound());
-        }
+        $this->manager->receiveChunk($uploadId, $index, $request->getContent(asResource: true));
 
-        return $this->guard(function () use ($request, $uploadId, $index): JsonResponse {
-            $this->manager->receiveChunk($uploadId, $index, $request->getContent(asResource: true));
-
-            return response()->json([
-                'status' => 'chunk-received',
-                'index' => $index,
-                'received' => \count($this->manager->receivedIndexes($uploadId)),
-            ]);
-        });
+        return response()->json([
+            'status' => 'chunk-received',
+            'index' => $index,
+            'received' => \count($this->manager->receivedIndexes($uploadId)),
+        ]);
     }
 
     public function status(Request $request): JsonResponse
     {
         $uploadId = $this->uploadId($request);
-        $meta     = $uploadId === null ? null : $this->manager->meta($uploadId);
-
-        if ($uploadId === null || ! $meta instanceof UploadMeta) {
-            return $this->error(ChunkUploadException::notFound());
-        }
+        $meta     = $this->manager->meta($uploadId) ?? throw ChunkUploadException::notFound();
 
         return response()->json([
             'received' => $this->manager->receivedIndexes($uploadId),
@@ -94,56 +71,25 @@ final class ChunkUploadController extends Controller
 
     public function finalize(Request $request): JsonResponse
     {
-        $uploadId = $this->uploadId($request);
-
-        if ($uploadId === null) {
-            return $this->error(ChunkUploadException::notFound());
-        }
-
-        return $this->guard(fn (): JsonResponse => response()->json([
+        return response()->json([
             'status' => 'completed',
-            'path' => $this->manager->finalize($uploadId),
-        ]));
+            'path' => $this->manager->finalize($this->uploadId($request)),
+        ]);
     }
 
     public function abort(Request $request): JsonResponse
     {
-        $uploadId = $this->uploadId($request);
-
-        if ($uploadId !== null) {
-            $this->manager->abort($uploadId);
-        }
+        $this->manager->abort($this->uploadId($request));
 
         return response()->json(['status' => 'aborted']);
     }
 
-    /**
-     * @param callable(): JsonResponse $handler
-     */
-    private function guard(callable $handler): JsonResponse
-    {
-        try {
-            return $handler();
-        } catch (ChunkUploadException $e) {
-            return $this->error($e);
-        }
-    }
-
-    private function error(ChunkUploadException $e): JsonResponse
-    {
-        return response()->json(
-            array_filter([
-                'error' => $e->getMessage(),
-                'missing' => $e->missing,
-            ]),
-            $e->status,
-        );
-    }
-
-    private function uploadId(Request $request): ?string
+    private function uploadId(Request $request): string
     {
         $uploadId = $request->string('upload_id')->toString();
 
-        return Str::isUuid($uploadId) ? $uploadId : null;
+        return Str::isUuid($uploadId)
+            ? $uploadId
+            : throw ChunkUploadException::notFound();
     }
 }

@@ -81,7 +81,6 @@ it('rejects a chunk whose body does not match the declared chunk size', function
 
     $this->sendChunk($uploadId, 1, 'too-short')->assertStatus(422);
 
-    // Nothing was accepted, so the upload still reports zero received chunks.
     $this->getJson(route('moonshine-chunk-upload.status', ['upload_id' => $uploadId]))
         ->assertOk()
         ->assertJsonPath('received', []);
@@ -108,7 +107,6 @@ it('loses the race when the upload is already being assembled', function (): voi
 
     $this->sendChunk($uploadId, 1, 'twelve-bytes')->assertOk();
 
-    // Stand in for a finalize request that claimed the directory first.
     Storage::disk('local')->put("tmp/{$uploadId}.assembling/1.part", 'twelve-bytes');
 
     $this->postJson(route('moonshine-chunk-upload.finalize'), ['upload_id' => $uploadId])
@@ -163,4 +161,38 @@ it('dispatches an event once the file is assembled', function (): void {
             && $event->meta->size === 24
             && $event->meta->extension === 'mp4',
     );
+});
+
+it('rejects a chunk whose body is larger than the declared chunk size', function (): void {
+    $uploadId = $this->initUpload(['size' => 24, 'total' => 2, 'chunk_size' => 12])
+        ->assertOk()
+        ->json('upload_id');
+
+    $this->sendChunk($uploadId, 1, 'far-too-long-for-one-chunk')->assertStatus(422);
+
+    $this->getJson(route('moonshine-chunk-upload.status', ['upload_id' => $uploadId]))
+        ->assertOk()
+        ->assertJsonPath('received', []);
+
+    expect(Storage::disk('local')->files("tmp/{$uploadId}"))->toBe(["tmp/{$uploadId}/meta.json"]);
+});
+
+it('treats a corrupted meta file as a missing upload', function (): void {
+    $uploadId = $this->initUpload()->assertOk()->json('upload_id');
+
+    Storage::disk('local')->put("tmp/{$uploadId}/meta.json", '{"size": "twelve"}');
+
+    $this->getJson(route('moonshine-chunk-upload.status', ['upload_id' => $uploadId]))->assertStatus(404);
+    $this->sendChunk($uploadId, 1, 'twelve-bytes')->assertStatus(404);
+    $this->postJson(route('moonshine-chunk-upload.finalize'), ['upload_id' => $uploadId])->assertStatus(404);
+});
+
+it('never overwrites an assembled file that shares its original name', function (): void {
+    $first  = $this->completeUpload(['first-chunk-'], 'clip.mp4', keepName: true);
+    $second = $this->completeUpload(['second-chunk'], 'clip.mp4', keepName: true);
+
+    expect($first)->toBe('final/clip.mp4')
+        ->and($second)->not->toBe($first)
+        ->and(Storage::disk('local')->get($first))->toBe('first-chunk-')
+        ->and(Storage::disk('local')->get($second))->toBe('second-chunk');
 });

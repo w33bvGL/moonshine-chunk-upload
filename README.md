@@ -126,6 +126,7 @@ and the column ends up holding the stored path, e.g. `videos/9f1c….mp4`.
 | `customName(Closure)` | Rename the file while it is moved onto the field's disk |
 | `removable()` | Render a remove control (MoonShine's own trait) |
 | `disableDeleteFiles()` | Keep the old file when the value is replaced or the record is deleted |
+| `disableDownload()` | Render the stored file name without a link in preview mode |
 | `title()` / `btnText()` / `icon()` / `color()` | Cosmetics of the drop zone |
 | `debug()` | Render the per-chunk request log under the field |
 
